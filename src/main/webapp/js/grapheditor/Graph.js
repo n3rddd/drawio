@@ -4974,6 +4974,47 @@ Graph.prototype.createVertexWipeAnimation = function(state, wipeIn)
 };
 
 /**
+ * Runs the animations step by step with a callback for each frame,
+ * allowing async frame capture (e.g. for animated export).
+ */
+Graph.prototype.executeAnimationsStepped = function(animations, steps, frameCallback, doneCallback)
+{
+	steps = (steps != null) ? steps : 30;
+	var step = 0;
+
+	var nextFrame = mxUtils.bind(this, function()
+	{
+		if (step <= steps)
+		{
+			for (var i = 0; i < animations.length; i++)
+			{
+				animations[i].execute(step, steps);
+			}
+
+			frameCallback(step, steps, function()
+			{
+				step++;
+				nextFrame();
+			});
+		}
+		else
+		{
+			for (var i = 0; i < animations.length; i++)
+			{
+				animations[i].stop();
+			}
+
+			if (doneCallback != null)
+			{
+				doneCallback();
+			}
+		}
+	});
+
+	nextFrame();
+};
+
+/**
  * Returns the size of the page format scaled with the page size.
  */
 Graph.prototype.getPageSize = function()
@@ -8901,7 +8942,7 @@ TableLayout.prototype.execute = function(parent)
 		}
 
 		// Updates link overlay before redraw in base call
-		if (state != null && state.invalid && Editor.showLinkIcons)
+		if (state != null && state.invalid && this.graph.showLinkIcons)
 		{
 			var link = this.graph.getLinkForCell(cell);
 			var hasLink = link != null && link.length > 0;

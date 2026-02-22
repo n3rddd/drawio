@@ -117,7 +117,6 @@ mxscript(geBasePath +'/Actions.js');
 mxscript(geBasePath +'/Menus.js');
 mxscript(geBasePath +'/Toolbar.js');
 mxscript(geBasePath +'/Dialogs.js');
-
 // Loads main classes
 mxscript(drawDevUrl + 'js/diagramly/sidebar/Sidebar.js');
 mxscript(drawDevUrl + 'js/diagramly/sidebar/Sidebar-ActiveDirectory.js');
@@ -188,6 +187,9 @@ mxscript(drawDevUrl + 'js/diagramly/sidebar/Sidebar-WebIcons.js');
 
 mxscript(drawDevUrl + 'js/diagramly/util/mxJsCanvas.js');
 mxscript(drawDevUrl + 'js/diagramly/util/mxAsyncCanvas.js');
+
+mxscript(drawDevUrl + 'js/diagramly/gif/GifEncoder.js');
+mxscript(drawDevUrl + 'js/diagramly/gif/AnimatedExport.js');
 
 mxscript(drawDevUrl + 'js/diagramly/DrawioFile.js');
 mxscript(drawDevUrl + 'js/diagramly/LocalFile.js');

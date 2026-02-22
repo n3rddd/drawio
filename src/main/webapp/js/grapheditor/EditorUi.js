@@ -396,6 +396,11 @@ EditorUi = function(editor, container, lightbox)
 		var panningHandlerIsForcePanningEvent = graph.panningHandler.isForcePanningEvent;
 		graph.panningHandler.isForcePanningEvent = function(me)
 		{
+			if (graph.freehand != null && graph.freehand.isActive())
+			{
+				return false;
+			}
+
 			// Ctrl+left button is reported as right button in FF on Mac
 			return panningHandlerIsForcePanningEvent.apply(this, arguments) ||
 				ui.isSpaceDown() || (mxEvent.isMouseEvent(me.getEvent()) &&
@@ -3863,6 +3868,11 @@ EditorUi.prototype.initCanvas = function()
 	mxEvent.addMouseWheelListener(mxUtils.bind(this, function(evt, up, force, cx, cy)
 	{
 		graph.fireEvent(new mxEventObject('wheel'));
+
+		if (graph.freehand != null && graph.freehand.isDrawing())
+		{
+			return;
+		}
 
 		if (this.dialogs == null || this.dialogs.length == 0)
 		{

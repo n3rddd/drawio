@@ -5152,7 +5152,187 @@
 
    	    this.saveData(filename, ext, data.substring(data.lastIndexOf(',') + 1), 'image/' + format, true);
 	};
-	
+
+	/**
+	 * Shows the animated GIF export dialog.
+	 */
+	EditorUi.prototype.showAnimatedGifExportDialog = function()
+	{
+		var div = document.createElement('div');
+		div.style.whiteSpace = 'nowrap';
+
+		var hd = document.createElement('h3');
+		mxUtils.write(hd, mxResources.get('formatAnimatedGif', null, 'Animated GIF'));
+		hd.style.cssText = 'width:100%;text-align:center;margin-top:0px;margin-bottom:10px';
+		div.appendChild(hd);
+
+		// Speed (FPS)
+		mxUtils.write(div, mxResources.get('speed', null, 'Speed') + ':');
+		var fpsSelect = document.createElement('select');
+		fpsSelect.style.marginLeft = '4px';
+		fpsSelect.style.width = '80px';
+
+		var fpsOptions = [
+			{label: mxResources.get('slow', null, 'Slow'), value: 8},
+			{label: mxResources.get('medium', null, 'Medium'), value: 15},
+			{label: mxResources.get('fast', null, 'Fast'), value: 24}
+		];
+
+		for (var i = 0; i < fpsOptions.length; i++)
+		{
+			var opt = document.createElement('option');
+			mxUtils.write(opt, fpsOptions[i].label);
+			opt.setAttribute('value', fpsOptions[i].value);
+
+			if (fpsOptions[i].value == 15)
+			{
+				opt.setAttribute('selected', 'selected');
+			}
+
+			fpsSelect.appendChild(opt);
+		}
+
+		div.appendChild(fpsSelect);
+		mxUtils.br(div);
+
+		// Zoom
+		var zoomContainer = document.createElement('div');
+		zoomContainer.style.marginTop = '10px';
+		mxUtils.write(zoomContainer, mxResources.get('zoom') + ':');
+		var zoomInput = document.createElement('input');
+		zoomInput.setAttribute('type', 'text');
+		zoomInput.style.width = '60px';
+		zoomInput.style.marginLeft = '4px';
+		zoomInput.value = '100%';
+		zoomContainer.appendChild(zoomInput);
+		div.appendChild(zoomContainer);
+
+		// Border
+		var borderContainer = document.createElement('div');
+		borderContainer.style.marginTop = '10px';
+		mxUtils.write(borderContainer, mxResources.get('borderWidth', null, 'Border Width') + ':');
+		var borderInput = document.createElement('input');
+		borderInput.setAttribute('type', 'text');
+		borderInput.style.width = '60px';
+		borderInput.style.marginLeft = '4px';
+		borderInput.value = '0';
+		borderContainer.appendChild(borderInput);
+		div.appendChild(borderContainer);
+
+		// Loop
+		var loopContainer = document.createElement('div');
+		loopContainer.style.marginTop = '10px';
+		mxUtils.write(loopContainer, mxResources.get('loops', null, 'Loops') + ':');
+		var loopSelect = document.createElement('select');
+		loopSelect.style.marginLeft = '4px';
+		loopSelect.style.width = '80px';
+
+		var loopOptions = [
+			{label: mxResources.get('forever', null, 'Forever'), value: 0},
+			{label: '1', value: 1},
+			{label: '3', value: 3},
+			{label: '5', value: 5}
+		];
+
+		for (var i = 0; i < loopOptions.length; i++)
+		{
+			var opt = document.createElement('option');
+			mxUtils.write(opt, loopOptions[i].label);
+			opt.setAttribute('value', loopOptions[i].value);
+
+			if (loopOptions[i].value == 0)
+			{
+				opt.setAttribute('selected', 'selected');
+			}
+
+			loopSelect.appendChild(opt);
+		}
+
+		loopContainer.appendChild(loopSelect);
+		div.appendChild(loopContainer);
+
+		// Transparent background
+		var transparent = this.addCheckbox(div, mxResources.get('transparentBackground',
+			null, 'Transparent Background'), false);
+
+		var dlg = new CustomDialog(this, div, mxUtils.bind(this, function()
+		{
+			var zoomVal = parseInt(zoomInput.value);
+
+			if (isNaN(zoomVal) || zoomVal <= 0)
+			{
+				zoomVal = 100;
+			}
+
+			this.exportAnimatedGif({
+				fps: parseInt(fpsSelect.value),
+				scale: zoomVal / 100,
+				border: parseInt(borderInput.value) || 0,
+				repeat: parseInt(loopSelect.value),
+				transparent: transparent.checked,
+				background: transparent.checked ? null :
+					((this.editor.graph.background != null &&
+					  this.editor.graph.background != mxConstants.NONE) ?
+						this.editor.graph.background : '#ffffff')
+			});
+		}), null, mxResources.get('export'),
+			'https://www.drawio.com/doc/faq/export-diagram');
+
+		this.showDialog(dlg.container, 300, 260, true, true, null, null, null, null, true);
+	};
+
+	/**
+	 * Exports the current diagram as an animated GIF.
+	 */
+	EditorUi.prototype.exportAnimatedGif = function(options)
+	{
+		if (this.spinner.spin(document.body, mxResources.get('exporting')))
+		{
+			try
+			{
+				var exp = new AnimatedGifExport(this);
+
+				exp.doExport(options, mxUtils.bind(this, function(blob)
+				{
+					this.spinner.stop();
+
+					if (blob != null)
+					{
+						var filename = this.getBaseFilename() + '.gif';
+
+						if (typeof navigator.msSaveBlob === 'function')
+						{
+							navigator.msSaveBlob(blob, filename);
+						}
+						else
+						{
+							var a = document.createElement('a');
+							a.href = URL.createObjectURL(blob);
+							a.download = filename;
+							document.body.appendChild(a);
+							a.click();
+
+							setTimeout(function()
+							{
+								document.body.removeChild(a);
+								URL.revokeObjectURL(a.href);
+							}, 0);
+						}
+					}
+				}), mxUtils.bind(this, function(e)
+				{
+					this.spinner.stop();
+					this.handleError(e);
+				}));
+			}
+			catch (e)
+			{
+				this.spinner.stop();
+				this.handleError(e);
+			}
+		}
+	};
+
 	/**
 	 * Returns true if files should be saved using <saveLocalFile>.
 	 */
@@ -11303,6 +11483,9 @@
 			return graphIsEnabled.apply(this, arguments) && !ui.isLocked();
 		};
 
+		// Shows link icons in main graph
+		graph.showLinkIcons = Editor.showLinkIcons;
+		
 		// Stops panning while freehand is active
 		if (Graph.touchStyle)
 		{

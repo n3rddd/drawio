@@ -775,6 +775,12 @@
 			exportImage('webp');
 		}));
 
+		editorUi.actions.put('exportAnimatedGif', new Action(mxResources.get('formatAnimatedGif',
+			null, 'Animated GIF') + '...', function()
+		{
+			editorUi.showAnimatedGifExportDialog();
+		}));
+
 		action = editorUi.actions.addAction('copyAsImage', mxUtils.bind(this, function()
 		{
 			var cells = mxUtils.sortCells(graph.model.getTopmostCells(graph.getSelectionCells()));
@@ -2781,7 +2787,12 @@
 			{
 				this.addMenuItems(menu, ['exportPng', 'exportJpg'], parent);
 			}
-			
+
+			if (editorUi.editor.isExportToCanvas())
+			{
+				this.addMenuItems(menu, ['exportAnimatedGif'], parent);
+			}
+
 			this.addMenuItems(menu, ['exportSvg', '-'], parent);
 			
 			// Redirects export to PDF to print in Chrome App

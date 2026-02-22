@@ -1,3 +1,19 @@
+22-FEB-2026: 29.5.2
+
+- Deletes unused code causing security warnings
+- Tidies changelog
+- Updates excludes
+- Fixes zoom while drawing freehand [jgraph/drawio#3959]
+- Updates MathJax from 4.1.0 to 4.1.1
+- Fixes panning in active freehand mode [jgraph/drawio#4080]
+- Adds animated gif export [jgraph/drawio#3739]
+- Moves animated gif functions to correct location
+- Fixes error for saving scratchpad [jgraph/drawio-desktop#2341]
+- Adds flow direction and fixes background for animated gif export
+- Limits show link icons to main graph
+- Fixes resources merge issue
+- Reviewed and updated translations
+
 20-FEB-2026: 29.5.1
 
 - Updates to emf importer
