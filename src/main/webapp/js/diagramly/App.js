@@ -2961,6 +2961,14 @@ App.prototype.open = function()
 					this.fileLoaded((mxClient.IS_IOS) ?
 						new StorageFile(this, xml, filename) :
 						new LocalFile(this, xml, filename, temp));
+					
+					// Marks temp files as changed to trigger draft save
+					var file = this.getCurrentFile();
+
+					if (temp && file != null)
+					{
+						file.fileChanged();
+					}
 				}));
 			}
 		}
@@ -3786,7 +3794,7 @@ App.prototype.openGenerateDialog = function(prompt)
 {
 	if (this.chatWindow == null)
 	{
-		this.chatWindow = new ChatWindow(this, 224, 104, 280, 320);
+		this.chatWindow = new ChatWindow(this, 224, 104, 360, 460);
 		this.chatWindow.window.addListener('show', mxUtils.bind(this, function()
 		{
 			this.fireEvent(new mxEventObject('chat'));
@@ -4402,21 +4410,29 @@ App.prototype.pickFile = function(mode)
 				this.openFile();
 				
 				// Installs local handler for opened files in same window
-				window.openFile.setConsumer(mxUtils.bind(this, function(xml, filename)
+				window.openFile.setConsumer(mxUtils.bind(this, function(xml, filename, temp)
 				{
 					var doOpenFile = mxUtils.bind(this, function()
 					{
 						// Replaces PNG with XML extension
 						var dot = !Editor.useCanvasForExport && filename.substring(filename.length - 4) == '.png';
-						
+
 						if (dot)
 						{
 							filename = filename.substring(0, filename.length - 4) + '.drawio';
 						}
-		
+
 						this.fileLoaded((mode == App.MODE_BROWSER) ?
 							new StorageFile(this, xml, filename) :
-							new LocalFile(this, xml, filename));
+							new LocalFile(this, xml, filename, temp));
+
+						// Marks temp files as changed to trigger draft save
+						var file = this.getCurrentFile();
+
+						if (temp && file != null)
+						{
+							file.fileChanged();
+						}
 					});
 					
 					var currentFile = this.getCurrentFile();

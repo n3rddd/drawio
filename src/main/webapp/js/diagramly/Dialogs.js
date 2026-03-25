@@ -8593,48 +8593,49 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	typeSelect.style.textOverflow = 'ellipsis';
 	typeSelect.style.padding = '5px';
 	typeSelect.style.minWidth = '0';
+	typeSelect.style.flexGrow = '1';
 
 	var createPublicOption = document.createElement('option');
-	
-	if (typeof mxMermaidToDrawio !== 'undefined' && window.isMermaidEnabled &&
-		mxUtils.indexOf(Editor.aiActions, 'createPublic') >= 0)
-	{
-		createPublicOption.setAttribute('value', 'createPublic');
-		mxUtils.write(createPublicOption, mxResources.get('create') +
-			' (' + mxResources.get('draw.io') + ')');
-		typeSelect.appendChild(createPublicOption);
-	}
-
 	var includeOption = document.createElement('option');
 	var selectionOption = document.createElement('option');
 	var createOption = document.createElement('option');
 	var helpOption = document.createElement('option');
 
 	if (typeof mxMermaidToDrawio !== 'undefined' && window.isMermaidEnabled &&
-		mxUtils.indexOf(Editor.aiActions, 'create') >= 0)
+		mxUtils.indexOf(Editor.aiActions, 'createPublic') >= 0)
 	{
-		createOption.setAttribute('value', 'create');
-		mxUtils.write(createOption, mxResources.get('create'));
-		typeSelect.appendChild(createOption);
+		createPublicOption.setAttribute('value', 'createPublic');
+		mxUtils.write(createPublicOption, mxResources.get('createDiagram') +
+			' (' + mxResources.get('draw.io') + ')');
+		typeSelect.appendChild(createPublicOption);
 	}
 
-	if (mxUtils.indexOf(Editor.aiActions, 'update') >= 0)
-	{
-		includeOption.setAttribute('value', 'includeCopyOfMyDiagram');
-		mxUtils.write(includeOption, mxResources.get('includeCopyOfMyDiagram'));
-		typeSelect.appendChild(includeOption);
+	var divider1 = document.createElement('option');
+	divider1.setAttribute('disabled', 'disabled');
+	mxUtils.write(divider1, '\u2500\u2500\u2500\u2500\u2500\u2500');
+	typeSelect.appendChild(divider1);
 
-		selectionOption.setAttribute('value', 'selectionOnly');
-		mxUtils.write(selectionOption, mxResources.get('selectionOnly'));
-		typeSelect.appendChild(selectionOption);
-	}
-	
-	if (mxUtils.indexOf(Editor.aiActions, 'assist') >= 0)
-	{
-		helpOption.setAttribute('value', 'assist');
-		mxUtils.write(helpOption, mxResources.get('help'));
-		typeSelect.appendChild(helpOption);
-	}
+	var copyDrawingOption = document.createElement('option');
+	copyDrawingOption.setAttribute('value', 'copyOfDrawing');
+	mxUtils.write(copyDrawingOption, mxResources.get('copyDiagramToClipboard'));
+	typeSelect.appendChild(copyDrawingOption);
+
+	var copySelectionOption = document.createElement('option');
+	copySelectionOption.setAttribute('value', 'copyOfSelection');
+	mxUtils.write(copySelectionOption, mxResources.get('copySelectionToClipboard'));
+	typeSelect.appendChild(copySelectionOption);
+
+	var pasteApplyOption = document.createElement('option');
+	pasteApplyOption.setAttribute('value', 'pasteDiagram');
+	pasteApplyOption.setAttribute('disabled', 'disabled');
+	mxUtils.write(pasteApplyOption, mxResources.get('updateDiagramFromClipboard'));
+	typeSelect.appendChild(pasteApplyOption);
+
+	var pasteInsertOption = document.createElement('option');
+	pasteInsertOption.setAttribute('value', 'insertDiagram');
+	pasteInsertOption.setAttribute('disabled', 'disabled');
+	mxUtils.write(pasteInsertOption, mxResources.get('insertDiagramFromClipboard'));
+	typeSelect.appendChild(pasteInsertOption);
 
 	// Adds a drop down for selecting the model from Editor.aiModels
 	var modelSelect = typeSelect.cloneNode(false);
@@ -8655,6 +8656,51 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	}
 	
 	var publicChat = modelSelect.children.length == 0;
+
+	if (!publicChat)
+	{
+		var divider2 = document.createElement('option');
+		divider2.setAttribute('disabled', 'disabled');
+		mxUtils.write(divider2, '\u2500\u2500\u2500\u2500\u2500\u2500');
+		typeSelect.appendChild(divider2);
+
+		if (typeof mxMermaidToDrawio !== 'undefined' && window.isMermaidEnabled &&
+			mxUtils.indexOf(Editor.aiActions, 'create') >= 0)
+		{
+			createOption.setAttribute('value', 'create');
+			mxUtils.write(createOption, mxResources.get('createDiagram'));
+			typeSelect.appendChild(createOption);
+		}
+
+		if (mxUtils.indexOf(Editor.aiActions, 'update') >= 0)
+		{
+			includeOption.setAttribute('value', 'includeCopyOfMyDiagram');
+			mxUtils.write(includeOption, mxResources.get('promptWithDiagram'));
+			typeSelect.appendChild(includeOption);
+
+			selectionOption.setAttribute('value', 'selectionOnly');
+			mxUtils.write(selectionOption, mxResources.get('promptWithSelection'));
+			typeSelect.appendChild(selectionOption);
+		}
+
+		if (mxUtils.indexOf(Editor.aiActions, 'assist') >= 0)
+		{
+			helpOption.setAttribute('value', 'assist');
+			mxUtils.write(helpOption, mxResources.get('promptOnly'));
+			typeSelect.appendChild(helpOption);
+		}
+	}
+
+	var divider3 = document.createElement('option');
+	divider3.setAttribute('disabled', 'disabled');
+	mxUtils.write(divider3, '\u2500\u2500\u2500\u2500\u2500\u2500');
+	typeSelect.appendChild(divider3);
+
+	var resetOption = document.createElement('option');
+	resetOption.setAttribute('value', 'resetHistory');
+	mxUtils.write(resetOption, mxResources.get('reset'));
+	typeSelect.appendChild(resetOption);
+
 	var inner = document.createElement('div');
 	inner.style.whiteSpace = 'nowrap';
 	inner.style.textOverflow = 'clip';
@@ -8683,22 +8729,20 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	inner.appendChild(sendImg);
 	user.appendChild(inner);
 
-	if (!publicChat)
+	if (!publicChat && urlParams['test'] != 1 &&
+		createPublicOption.parentNode != null)
 	{
-		if (urlParams['test'] != 1)
-		{
-			createPublicOption.parentNode.removeChild(createPublicOption);
-		}
-
-		options.appendChild(typeSelect);
-
-		if (modelSelect.children.length > 1)
-		{
-			options.appendChild(modelSelect);
-		}
-		
-		user.appendChild(options);
+		createPublicOption.parentNode.removeChild(createPublicOption);
 	}
+
+	options.appendChild(typeSelect);
+
+	if (!publicChat && modelSelect.children.length > 1)
+	{
+		options.appendChild(modelSelect);
+	}
+
+	user.appendChild(options);
 
 	if (typeSelect.children.length > 0)
 	{
@@ -8708,23 +8752,445 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	var ignoreChange = false;
 	var lastType = typeSelect.value;
 
+	var isClipboardType = function(value)
+	{
+		return value == 'copyOfDrawing' ||
+			value == 'copyOfSelection' ||
+			value == 'pasteDiagram' ||
+			value == 'insertDiagram';
+	};
+
 	var updateDropdowns = function()
 	{
 		inp.setAttribute('placeholder', mxResources.get(
 			(typeSelect.value == 'create' ||
 			typeSelect.value == 'createPublic') ?
-			'describeYourDiagram' :
-			'askMeAnything'));
+			'describeYourDiagram' : 'askMeAnything'));
 	};
 
 	updateDropdowns();
+
+	function addClipboardEntry(label, xmlData, elts)
+	{
+		// Input bubble with label
+		var bubble = addBubble(label);
+		elts.push(bubble);
+
+		bubble.style.marginBottom = '2px';
+		bubble.style.marginLeft = '40%';
+		bubble.style.borderRadius = '10px';
+		bubble.style.backgroundColor = 'light-dark(#e0e0e0, #3a3a3a)';
+
+		// Inline delete button after input bubble
+		var inlineButtons = document.createElement('div');
+		inlineButtons.className = 'geInlineButtons';
+		inlineButtons.style.display = 'flex';
+		inlineButtons.style.justifyContent = 'end';
+		elts.push(inlineButtons);
+
+		addDeleteButton(inlineButtons, elts);
+		hist.appendChild(inlineButtons);
+
+		// Response bubble with SVG preview
+		var response = createBubble();
+		response.className = 'geSidebar';
+		response.style.marginTop = '2px';
+		elts.push(response);
+
+		var cells = null;
+
+		try
+		{
+			cells = editorUi.stringToCells(xmlData);
+
+			if (cells != null && cells.length > 0)
+			{
+				var bbox = graph.getBoundingBoxFromGeometry(cells);
+				editorUi.sidebar.graph.moveCells(cells, -bbox.x, -bbox.y);
+
+				var svg = editorUi.getSvgForXml(xmlData);
+				svg.style.overflow = 'visible';
+				svg.style.padding = '1px';
+				svg.style.cursor = 'move';
+				svg.style.width = '160px';
+				svg.style.height = 'auto';
+				svg.style.maxHeight = '460px';
+
+				var item = document.createElement('a');
+				item.className = 'geItem';
+				item.style.padding = '4px';
+				item.style.borderRadius = '10px';
+				item.appendChild(svg);
+				response.appendChild(item);
+
+				editorUi.sidebar.createItem(cells, label, true, true,
+					bbox.width, bbox.height, true, true, null, null,
+					null, null, null, null, item);
+			}
+		}
+		catch (e)
+		{
+			// ignore preview errors
+		}
+
+		hist.appendChild(response);
+
+		return {element: response, cells: cells};
+	};
+
+	function addDeleteButton(buttons, elts)
+	{
+		var btn = document.createElement('img');
+		btn.className = 'geAdaptiveAsset geLibraryButton';
+		btn.setAttribute('src', Editor.trashImage);
+		btn.setAttribute('title', mxResources.get('remove'));
+		buttons.appendChild(btn);
+
+		mxEvent.addListener(btn, 'click', function(evt)
+		{
+			if (mxEvent.isShiftDown(evt))
+			{
+				hist.innerHTML = '';
+			}
+			else
+			{
+				for (var i = 0; i < elts.length; i++)
+				{
+					if (elts[i].parentNode != null)
+					{
+						elts[i].parentNode.removeChild(elts[i]);
+					}
+				}
+
+				elts.length = 0;
+			}
+		});
+
+		return btn;
+	};
+
+	function addDiagramButtons(buttons, xmlData, cells, bubble, label)
+	{
+		var btn = document.createElement('img');
+		btn.className = 'geAdaptiveAsset geLibraryButton';
+		btn.setAttribute('src', Editor.copyImage);
+		btn.setAttribute('title', mxResources.get('copy'));
+		buttons.appendChild(btn);
+
+		mxEvent.addListener(btn, 'click', function()
+		{
+			editorUi.writeTextToClipboard(xmlData, function(e)
+			{
+				editorUi.handleError(e);
+			});
+		});
+
+		if (editorUi.getServiceName() == 'draw.io')
+		{
+			btn = btn.cloneNode();
+			btn.setAttribute('src', Editor.shareImage);
+			btn.setAttribute('title', mxResources.get(!editorUi.isStandaloneApp() ?
+				'openInNewWindow' : 'export'));
+			buttons.appendChild(btn);
+
+			mxEvent.addListener(btn, 'click', function()
+			{
+				if (!editorUi.isStandaloneApp())
+				{
+					editorUi.editor.editAsNew(xmlData);
+				}
+				else
+				{
+					editorUi.saveData('export.xml', 'xml', xmlData, 'text/xml');
+				}
+			});
+		}
+
+		btn = btn.cloneNode();
+		btn.setAttribute('src', Editor.magnifyImage);
+		btn.setAttribute('title', mxResources.get('preview'));
+		buttons.appendChild(btn);
+
+		mxEvent.addListener(btn, 'click', function(evt)
+		{
+			var ww = window.innerWidth || document.documentElement.clientWidth ||
+				document.body.clientWidth;
+			var wh = window.innerHeight || document.documentElement.clientHeight ||
+				document.body.clientHeight;
+
+			editorUi.sidebar.createTooltip(bubble, cells,
+				Math.min(ww - 120, 1600), Math.min(wh - 120, 1200),
+				label, true, new mxPoint(mxEvent.getClientX(evt),
+				mxEvent.getClientY(evt)), true, null, true, false);
+		});
+
+		btn = btn.cloneNode();
+		btn.setAttribute('src', Editor.plusImage);
+		btn.setAttribute('title', mxResources.get('insert'));
+		buttons.appendChild(btn);
+
+		mxEvent.addListener(btn, 'click', function(e)
+		{
+			graph.model.beginUpdate();
+			try
+			{
+				var pt = graph.getFreeInsertPoint();
+				graph.setSelectionCells(graph.importCells(
+					cells, pt.x, pt.y));
+			}
+			finally
+			{
+				graph.model.endUpdate();
+			}
+
+			graph.scrollCellToVisible(graph.getSelectionCell());
+			mxEvent.consume(e);
+		});
+
+		return btn;
+	};
+
+	function executeClipboardAction(type)
+	{
+		if (type == 'copyOfDrawing' || type == 'copyOfSelection')
+		{
+			try
+			{
+				var enc = new mxCodec(mxUtils.createXmlDocument());
+
+				if (type == 'copyOfSelection')
+				{
+					enc.isObjectIgnored = function(obj)
+					{
+						return obj.constructor == mxCell &&
+							(!graph.model.isRoot(obj) &&
+							!graph.model.isLayer(obj) &&
+							!graph.isCellSelected(obj) &&
+							!graph.isAncestorSelected(obj));
+					};
+				}
+
+				var xml = enc.encode(graph.getModel());
+				xml.ownerDocument.appendChild(xml);
+				var data = mxUtils.getXml(xml);
+
+				editorUi.writeTextToClipboard(data, function(e)
+				{
+					editorUi.handleError(e);
+				}, function()
+				{
+					var elts = [];
+					var label = mxResources.get('copiedToClipboard');
+					var result = addClipboardEntry(label, data, elts);
+
+					var buttons = document.createElement('div');
+					buttons.style.display = 'flex';
+					elts.push(buttons);
+
+					if (result.cells != null && result.cells.length > 0)
+					{
+						addDiagramButtons(buttons, data, result.cells,
+							result.element, label);
+					}
+
+					hist.appendChild(buttons);
+					buttons.scrollIntoView({behavior: 'smooth',
+						block: 'end', inline: 'nearest'});
+				});
+			}
+			catch (e)
+			{
+				editorUi.handleError(e);
+			}
+		}
+		else if (type == 'pasteDiagram')
+		{
+			try
+			{
+				navigator.clipboard.readText().then(mxUtils.bind(this, function(text)
+				{
+					try
+					{
+						var parsed = Editor.extractGraphModelFromText(text);
+						var xmlText = (parsed[1].length > 0) ? parsed[1] : text;
+						var doc = mxUtils.parseXml(xmlText);
+
+						if (doc.documentElement.nodeName != 'mxGraphModel')
+						{
+							throw new Error(mxResources.get('invalidInput'));
+						}
+
+						var codec = new mxCodec(doc);
+						var receivedModel = new mxGraphModel();
+						codec.decode(doc.documentElement, receivedModel);
+
+						var applyFn = mxUtils.bind(this, function()
+						{
+							var enc = new mxCodec(mxUtils.createXmlDocument());
+							var currentXml = enc.encode(graph.getModel());
+							currentXml.ownerDocument.appendChild(currentXml);
+							var currentCodec = new mxCodec(currentXml.ownerDocument);
+							var sentModel = new mxGraphModel();
+							currentCodec.decode(currentXml, sentModel);
+
+							var page = editorUi.currentPage;
+
+							graph.model.beginUpdate();
+							try
+							{
+								var patch = editorUi.diffCells(
+									sentModel.root, receivedModel.root);
+								editorUi.patchPage(page, patch, null, true);
+							}
+							finally
+							{
+								graph.model.endUpdate();
+							}
+						});
+
+						// Apply immediately
+						applyFn();
+
+						// Add to chat history
+						var elts = [];
+						var label = mxResources.get('updateDiagramFromClipboard');
+						var result = addClipboardEntry(label, xmlText, elts);
+
+						var buttons = document.createElement('div');
+						buttons.style.display = 'flex';
+						elts.push(buttons);
+
+						if (result.cells != null && result.cells.length > 0)
+						{
+							addDiagramButtons(buttons, xmlText, result.cells,
+								result.element, label);
+						}
+
+						// Apply button (re-apply the diff)
+						var btn = document.createElement('img');
+						btn.className = 'geAdaptiveAsset geLibraryButton';
+						btn.setAttribute('src', Editor.checkImage);
+						btn.setAttribute('title', mxResources.get('apply'));
+						buttons.appendChild(btn);
+
+						mxEvent.addListener(btn, 'click', function(e)
+						{
+							applyFn();
+							mxEvent.consume(e);
+						});
+
+						hist.appendChild(buttons);
+						buttons.scrollIntoView({behavior: 'smooth',
+							block: 'end', inline: 'nearest'});
+					}
+					catch (e)
+					{
+						editorUi.handleError(e);
+					}
+				}))['catch'](function(e)
+				{
+					editorUi.handleError(e);
+				});
+			}
+			catch (e)
+			{
+				editorUi.handleError(e);
+			}
+		}
+		else if (type == 'insertDiagram')
+		{
+			try
+			{
+				navigator.clipboard.readText().then(mxUtils.bind(this, function(text)
+				{
+					try
+					{
+						var parsed = Editor.extractGraphModelFromText(text);
+						var xmlText = (parsed[1].length > 0) ? parsed[1] : text;
+						var doc = mxUtils.parseXml(xmlText);
+
+						if (doc.documentElement.nodeName != 'mxGraphModel')
+						{
+							throw new Error(mxResources.get('invalidInput'));
+						}
+
+						var elts = [];
+						var label = mxResources.get('insertDiagramFromClipboard');
+						var result = addClipboardEntry(label, xmlText, elts);
+
+						var buttons = document.createElement('div');
+						buttons.style.display = 'flex';
+						elts.push(buttons);
+
+						if (result.cells != null && result.cells.length > 0)
+						{
+							addDiagramButtons(buttons, xmlText, result.cells,
+								result.element, label);
+						}
+
+						hist.appendChild(buttons);
+						buttons.scrollIntoView({behavior: 'smooth',
+							block: 'end', inline: 'nearest'});
+
+						// Insert cells into graph
+						if (result.cells != null && result.cells.length > 0)
+						{
+							graph.model.beginUpdate();
+							try
+							{
+								var pt = graph.getFreeInsertPoint();
+								graph.setSelectionCells(graph.importCells(
+									result.cells, pt.x, pt.y));
+							}
+							finally
+							{
+								graph.model.endUpdate();
+							}
+
+							graph.scrollCellToVisible(graph.getSelectionCell());
+						}
+					}
+					catch (e)
+					{
+						editorUi.handleError(e);
+					}
+				}))['catch'](function(e)
+				{
+					editorUi.handleError(e);
+				});
+			}
+			catch (e)
+			{
+				editorUi.handleError(e);
+			}
+		}
+	};
 
 	function typeChanged()
 	{
 		if (!ignoreChange)
 		{
+			if (isClipboardType(typeSelect.value))
+			{
+				executeClipboardAction(typeSelect.value);
+				typeSelect.value = lastType;
+				return;
+			}
+
+			if (typeSelect.value == 'resetHistory')
+			{
+				typeSelect.value = lastType;
+
+				editorUi.confirm(mxResources.get('areYouSure'), function()
+				{
+					hist.innerHTML = '';
+				});
+
+				return;
+			}
+
 			lastType = typeSelect.value;
-				updateDropdowns();
+			updateDropdowns();
 		}
 
 		modelSelect.style.display =
@@ -8743,6 +9209,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 		if (graph.isSelectionEmpty())
 		{
 			selectionOption.setAttribute('disabled', 'disabled');
+			copySelectionOption.setAttribute('disabled', 'disabled');
 
 			if (typeSelect.value == 'selectionOnly')
 			{
@@ -8752,11 +9219,13 @@ var ChatWindow = function(editorUi, x, y, w, h)
 		else
 		{
 			selectionOption.removeAttribute('disabled');
+			copySelectionOption.removeAttribute('disabled');
 		}
 
 		if (editorUi.isDiagramEmpty())
 		{
 			includeOption.setAttribute('disabled', 'disabled');
+			copyDrawingOption.setAttribute('disabled', 'disabled');
 
 			if (typeSelect.value == 'includeCopyOfMyDiagram')
 			{
@@ -8766,6 +9235,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 		else
 		{
 			includeOption.removeAttribute('disabled');
+			copyDrawingOption.removeAttribute('disabled');
 		}
 
 		ignoreChange = false;
@@ -8774,6 +9244,50 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	graph.selectionModel.addListener(mxEvent.CHANGE, updateType);
 	graph.getModel().addListener(mxEvent.CHANGE, updateType);
 	updateType();
+
+	function checkClipboard()
+	{
+		try
+		{
+			navigator.clipboard.readText().then(function(text)
+			{
+				try
+				{
+					var parsed = Editor.extractGraphModelFromText(text);
+					var xmlText = (parsed[1].length > 0) ? parsed[1] : text;
+					var doc = mxUtils.parseXml(xmlText);
+
+					if (doc.documentElement.nodeName == 'mxGraphModel')
+					{
+						pasteApplyOption.removeAttribute('disabled');
+						pasteInsertOption.removeAttribute('disabled');
+					}
+					else
+					{
+						pasteApplyOption.setAttribute('disabled', 'disabled');
+						pasteInsertOption.setAttribute('disabled', 'disabled');
+					}
+				}
+				catch (e)
+				{
+					pasteApplyOption.setAttribute('disabled', 'disabled');
+					pasteInsertOption.setAttribute('disabled', 'disabled');
+				}
+			})['catch'](function()
+			{
+				pasteApplyOption.setAttribute('disabled', 'disabled');
+				pasteInsertOption.setAttribute('disabled', 'disabled');
+			});
+		}
+		catch (e)
+		{
+			pasteApplyOption.setAttribute('disabled', 'disabled');
+			pasteInsertOption.setAttribute('disabled', 'disabled');
+		}
+	};
+
+	checkClipboard();
+	mxEvent.addListener(window, 'focus', checkClipboard);
 
 	function createBubble()
 	{
@@ -9221,6 +9735,19 @@ var ChatWindow = function(editorUi, x, y, w, h)
 						buttons.appendChild(btn);
 						mxEvent.addListener(btn, 'click', processMessage);
 
+						btn = btn.cloneNode();
+						btn.setAttribute('src', Editor.copyImage);
+						btn.setAttribute('title', mxResources.get('copy'));
+						buttons.appendChild(btn);
+
+						mxEvent.addListener(btn, 'click', function()
+						{
+							editorUi.writeTextToClipboard(data[1], function(e)
+							{
+								editorUi.handleError(e);
+							});
+						});
+
 						if (editorUi.getServiceName() == 'draw.io')
 						{
 							btn = btn.cloneNode();
@@ -9251,7 +9778,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 						{
 							var ww = window.innerWidth || document.documentElement.clientWidth || document.body.clientWidth;
 							var wh = window.innerHeight || document.documentElement.clientHeight || document.body.clientHeight;
-							
+
 							editorUi.sidebar.createTooltip(bubble, cells, Math.min(ww - 120, 1600), Math.min(wh - 120, 1200),
 								prompt, true, new mxPoint(mxEvent.getClientX(evt), mxEvent.getClientY(evt)), true, function()
 								{
@@ -9427,7 +9954,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 		if (mxUtils.trim(inp.value) != '')
 		{
 			try
-			{	
+			{
 				addMessage(inp.value);
 				inp.value = '';
 			}
@@ -9474,6 +10001,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	this.window.addListener(mxEvent.DESTROY, mxUtils.bind(this, function()
 	{
 		graph.getModel().removeListener(updateType);
+		mxEvent.removeListener(window, 'focus', checkClipboard);
 	}));
 
 	this.window.addListener('show', mxUtils.bind(this, function()

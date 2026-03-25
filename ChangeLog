@@ -1,3 +1,20 @@
+24-MAR-2026: 29.6.6
+
+- Enhances tab activation and scrolling behavior in the page tab container
+- Threads done callback through openFiles/openFileHandle/openLocalFile
+- Remove launch configuration file for development servers
+- Sanitizes invalid VSDX property names for best-effort import
+- Add clipboard actions to generate dialog [jgraph/drawio#5507]
+- Update subproject commit reference in resources
+- Add smooth scrolling to tab on click in createTab function
+- Update chat window dimensions in openGenerateDialog function
+- Allow docked windows to be resized
+- Update clipboard copy label in ChatWindow dialog
+- Adds animated git export to atlas.min.js
+- Add insert diagram from clipboard option in generate dialog
+- Improve generate dialog dropdown labels for AI options
+- Fixes encoding for connect attachments comments
+
 23-MAR-2026: 29.6.5
 
 - Corrects dashboard path

@@ -3601,40 +3601,63 @@ TextFormatPanel.prototype.addFont = function(container)
 	var wwCells = graph.filterSelectionCells(mxUtils.bind(this, function(cell)
 	{
 		var state = graph.view.getState(cell);
-		
+
 		return state == null ||
 			graph.getModel().isEdge(cell) ||
 			graph.isAutoSizeState(state);
 	}));
-	
-	var wwOpt = this.createCellOption(mxResources.get('wordWrap'), mxConstants.STYLE_WHITE_SPACE,
+
+	var state = graph.view.getState(graph.getSelectionCell());
+	var formatted = mxUtils.getValue(ss.style, 'html', 0) == '1';
+
+	// Uses svgWhiteSpace when convertToSvg is active, whiteSpace otherwise
+	var isSvgMode = formatted && ((graph.getSelectionCount() > 1 && ss.style['convertToSvg'] == '1') ||
+		(graph.getSelectionCount() == 1 && state != null && state.text != null &&
+		state.text.node != null && state.text.node.getElementsByTagName('foreignObject').length == 0));
+
+	var wwStyleKey = isSvgMode ? 'svgWhiteSpace' : mxConstants.STYLE_WHITE_SPACE;
+	var wwOpt = this.createCellOption(mxResources.get('wordWrap'), wwStyleKey,
 		null, 'wrap', 'null', null, null, true, wwCells);
 	wwOpt.style.fontWeight = 'bold';
-	
+
 	// Word wrap in edge labels only supported via labelWidth style
 	if (wwCells.length > 0)
 	{
 		extraPanel.appendChild(wwOpt);
 	}
-	
+
 	// Delegates switch of style to formattedText action as it also convertes newlines
 	var htmlOpt = this.createCellOption(mxResources.get('formattedText'), 'html', 0,
 		null, null, null, ui.actions.get('formattedText'));
 	htmlOpt.style.fontWeight = 'bold';
 	extraPanel.appendChild(htmlOpt);
 
-	var state = graph.view.getState(graph.getSelectionCell());
-	var formatted = mxUtils.getValue(ss.style, 'html', 0) == '1';
-	
-	if (formatted && ((graph.getSelectionCount() > 1 && ss.style['convertToSvg'] == '1') ||
-		(graph.getSelectionCount() == 1 && state != null && state.text != null &&
-		state.text.node != null && state.text.node.getElementsByTagName('foreignObject').length == 0)))
+	var convertToSvg = this.createCellOption(mxResources.get('lblToSvg'), 'convertToSvg', '0',
+		null, null, function(cells, value)
 	{
-		wwOpt.style.opacity = '0.5';
-		wwOpt.getElementsByTagName('input')[0].setAttribute('disabled', 'disabled');
-	}
+		// Syncs word wrap style when toggling convertToSvg
+		for (var i = 0; i < cells.length; i++)
+		{
+			var cellStyle = graph.getCurrentCellStyle(cells[i]);
 
-	var convertToSvg = this.createCellOption(mxResources.get('lblToSvg'), 'convertToSvg', '0');
+			if (value)
+			{
+				// Toggled ON: copy whiteSpace to svgWhiteSpace
+				if (cellStyle[mxConstants.STYLE_WHITE_SPACE] == 'wrap')
+				{
+					graph.setCellStyles('svgWhiteSpace', 'wrap', [cells[i]]);
+				}
+			}
+			else
+			{
+				// Toggled OFF: copy svgWhiteSpace to whiteSpace
+				if (cellStyle['svgWhiteSpace'] == 'wrap')
+				{
+					graph.setCellStyles(mxConstants.STYLE_WHITE_SPACE, 'wrap', [cells[i]]);
+				}
+			}
+		}
+	});
 	convertToSvg.style.fontWeight = 'bold';
 	extraPanel.appendChild(convertToSvg);
 	
@@ -3642,6 +3665,48 @@ TextFormatPanel.prototype.addFont = function(container)
 	{
 		convertToSvg.style.opacity = '0.5';
 		convertToSvg.getElementsByTagName('input')[0].setAttribute('disabled', 'disabled');
+	}
+	else
+	{
+		// Disables option if any selected cell's label contains HTML elements
+		// that are not supported by the HTML-to-SVG conversion in mxSvgCanvas2D
+		var supportedTags = {'H1': 1, 'H2': 1, 'H3': 1, 'H4': 1, 'H5': 1, 'H6': 1,
+			'P': 1, 'PRE': 1, 'BLOCKQUOTE': 1, 'SUP': 1, 'SUB': 1,
+			'B': 1, 'I': 1, 'SPAN': 1, 'FONT': 1, 'STRIKE': 1, 'U': 1};
+		var hasUnsupported = false;
+		var cells = graph.getSelectionCells();
+
+		for (var i = 0; i < cells.length && !hasUnsupported; i++)
+		{
+			var label = graph.getLabel(cells[i]);
+
+			if (label != null && label.length > 0)
+			{
+				var tmp = document.createElement('div');
+				tmp.innerHTML = label;
+				var elts = tmp.getElementsByTagName('*');
+
+				for (var j = 0; j < elts.length; j++)
+				{
+					if (supportedTags[elts[j].nodeName] == null ||
+						(elts[j].style != null && elts[j].style.backgroundColor != ''))
+					{
+						hasUnsupported = true;
+						break;
+					}
+				}
+			}
+		}
+
+		if (hasUnsupported)
+		{
+			convertToSvg.style.opacity = '0.5';
+			convertToSvg.getElementsByTagName('input')[0].setAttribute('disabled', 'disabled');
+			convertToSvg.setAttribute('title',
+				'Label contains unsupported HTML for SVG conversion. ' +
+				'Supported: H1-H6, P, PRE, BLOCKQUOTE, B, I, U, STRIKE, ' +
+				'SUP, SUB, SPAN, FONT (without background color).');
+		}
 	}
 
 	var autosizeOpt = this.createCellOption(mxResources.get('autosizeText'),

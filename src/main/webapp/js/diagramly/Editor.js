@@ -312,6 +312,12 @@
 	Editor.showTooltipIcons = false;
 
 	/**
+	 * Specifies if fill patterns should be expanded to inline geometry for
+	 * print and PDF export to avoid rasterization. Default is true.
+	 */
+	Editor.expandPatternsForPrint = true;
+
+	/**
 	 * Specifies the default text style.
 	 */
 	Editor.defaultTextStyle = 'text;html=1;whiteSpace=wrap;strokeColor=none;fillColor=none;' +
@@ -2603,6 +2609,11 @@
 				Editor.showTooltipIcons = config.showTooltipIcons;
 			}
 
+			if (config.expandPatternsForPrint != null)
+			{
+				Editor.expandPatternsForPrint = config.expandPatternsForPrint;
+			}
+
 			if (config.showConnectHandle != null)
 			{
 				Editor.showConnectHandle = config.showConnectHandle;
@@ -3121,7 +3132,362 @@
 	{
 		return typeof window.mxSettings !== 'undefined' && (isLocalStorage || mxClient.IS_CHROMEAPP);
 	};
-	
+
+	/**
+	 * Expands SVG fill patterns into inline vector geometry clipped to each
+	 * shape so that patterns are not rasterized by Chrome's PDF backend.
+	 */
+	Editor.expandSvgPatterns = function(svg)
+	{
+		var svgNS = 'http://www.w3.org/2000/svg';
+		var clipCounter = 0;
+
+		/**
+		 * Parses a patternTransform attribute string into its components.
+		 * Expected form: "translate(tx,ty) rotate(angle) scale(s)"
+		 */
+		function parsePatternTransform(str)
+		{
+			var tx = 0, ty = 0, angle = 0, sx = 1, sy = 1;
+
+			if (str != null)
+			{
+				var translateMatch = str.match(/translate\(\s*([^,\s]+)[,\s]+([^)]+)\)/);
+
+				if (translateMatch != null)
+				{
+					tx = parseFloat(translateMatch[1]);
+					ty = parseFloat(translateMatch[2]);
+				}
+
+				var rotateMatch = str.match(/rotate\(\s*([^)]+)\)/);
+
+				if (rotateMatch != null)
+				{
+					angle = parseFloat(rotateMatch[1]) * Math.PI / 180;
+				}
+
+				var scaleMatch = str.match(/scale\(\s*([^,\s)]+)(?:[,\s]+([^)]+))?\)/);
+
+				if (scaleMatch != null)
+				{
+					sx = parseFloat(scaleMatch[1]);
+					sy = (scaleMatch[2] != null) ? parseFloat(scaleMatch[2]) : sx;
+				}
+			}
+
+			return {tx: tx, ty: ty, angle: angle, sx: sx, sy: sy};
+		};
+
+		/**
+		 * Transforms a point from pattern space to user space.
+		 */
+		function transformPoint(x, y, t)
+		{
+			// Apply scale
+			var sx = x * t.sx;
+			var sy = y * t.sy;
+
+			// Apply rotation
+			var cos = Math.cos(t.angle);
+			var sin = Math.sin(t.angle);
+			var rx = sx * cos - sy * sin;
+			var ry = sx * sin + sy * cos;
+
+			// Apply translation
+			return {x: rx + t.tx, y: ry + t.ty};
+		};
+
+		/**
+		 * Transforms a point from user space to pattern space (inverse).
+		 */
+		function inverseTransformPoint(x, y, t)
+		{
+			// Remove translation
+			var dx = x - t.tx;
+			var dy = y - t.ty;
+
+			// Inverse rotation
+			var cos = Math.cos(-t.angle);
+			var sin = Math.sin(-t.angle);
+			var rx = dx * cos - dy * sin;
+			var ry = dx * sin + dy * cos;
+
+			// Inverse scale
+			return {x: rx / t.sx, y: ry / t.sy};
+		};
+
+		/**
+		 * Returns the accumulated transform from an element up to the SVG root
+		 * as a transform attribute string, or null if no transforms exist.
+		 */
+		function getAccumulatedTransform(el, svgRoot)
+		{
+			var transforms = [];
+			var current = el;
+
+			while (current != null && current !== svgRoot && current.nodeType === 1)
+			{
+				var t = current.getAttribute('transform');
+
+				if (t != null && t.length > 0)
+				{
+					transforms.unshift(t);
+				}
+
+				current = current.parentNode;
+			}
+
+			return (transforms.length > 0) ? transforms.join(' ') : null;
+		};
+
+		/**
+		 * Resolves a fill URL reference to a pattern element.
+		 */
+		function resolvePattern(el, svgRoot)
+		{
+			var fill = el.getAttribute('fill');
+
+			if (fill == null || fill.indexOf('url(') !== 0)
+			{
+				return null;
+			}
+
+			var match = fill.match(/url\([^#]*#([^)"]+)\)?/);
+
+			if (match == null)
+			{
+				return null;
+			}
+
+			var patternId = match[1];
+
+			// Uses querySelector on SVG root instead of getElementById
+			// because the print preview document may not have indexed IDs
+			try
+			{
+				var pattern = svgRoot.querySelector('#' + CSS.escape(patternId));
+
+				return (pattern != null && pattern.nodeName === 'pattern') ? pattern : null;
+			}
+			catch (e)
+			{
+				return null;
+			}
+		};
+
+		/**
+		 * Expands a single pattern-filled element.
+		 */
+		function expandElement(el, pattern, svgRoot)
+		{
+			var bbox;
+
+			try
+			{
+				bbox = el.getBBox();
+			}
+			catch (e)
+			{
+				return;
+			}
+
+			if (bbox.width === 0 || bbox.height === 0)
+			{
+				return;
+			}
+
+			var pw = parseFloat(pattern.getAttribute('width'));
+			var ph = parseFloat(pattern.getAttribute('height'));
+
+			if (isNaN(pw) || isNaN(ph) || pw <= 0 || ph <= 0)
+			{
+				return;
+			}
+
+			var t = parsePatternTransform(pattern.getAttribute('patternTransform'));
+
+			// Get the element's accumulated transform for the clip path
+			var elemTransform = getAccumulatedTransform(el, svgRoot);
+
+			// Compute bbox corners in user space (relative to element's local coords)
+			var corners = [
+				{x: bbox.x, y: bbox.y},
+				{x: bbox.x + bbox.width, y: bbox.y},
+				{x: bbox.x + bbox.width, y: bbox.y + bbox.height},
+				{x: bbox.x, y: bbox.y + bbox.height}
+			];
+
+			// If the element has a transform, apply it to get coordinates in
+			// the same space as the pattern (user/diagram space)
+			if (elemTransform != null)
+			{
+				try
+				{
+					var ctm = el.getCTM();
+					var svgCtm = svgRoot.getCTM() || svgRoot.createSVGMatrix();
+					// Transform from element space to SVG space
+					var m = svgCtm.inverse().multiply(ctm);
+
+					for (var i = 0; i < corners.length; i++)
+					{
+						var pt = svgRoot.createSVGPoint();
+						pt.x = corners[i].x;
+						pt.y = corners[i].y;
+						pt = pt.matrixTransform(m);
+						corners[i] = {x: pt.x, y: pt.y};
+					}
+				}
+				catch (e)
+				{
+					// Fall back to untransformed corners
+				}
+			}
+
+			// Transform corners to pattern space (inverse of patternTransform)
+			var minX = Infinity, minY = Infinity;
+			var maxX = -Infinity, maxY = -Infinity;
+
+			for (var i = 0; i < corners.length; i++)
+			{
+				var p = inverseTransformPoint(corners[i].x, corners[i].y, t);
+				minX = Math.min(minX, p.x);
+				minY = Math.min(minY, p.y);
+				maxX = Math.max(maxX, p.x);
+				maxY = Math.max(maxY, p.y);
+			}
+
+			// Compute tile index range with margin
+			var tileMinX = Math.floor(minX / pw) - 1;
+			var tileMinY = Math.floor(minY / ph) - 1;
+			var tileMaxX = Math.ceil(maxX / pw) + 1;
+			var tileMaxY = Math.ceil(maxY / ph) + 1;
+
+			// Safety limit to prevent excessive tiles
+			var maxTiles = 10000;
+			var tileCount = (tileMaxX - tileMinX) * (tileMaxY - tileMinY);
+
+			if (tileCount > maxTiles)
+			{
+				return;
+			}
+
+			// Create the clip path from the element
+			var clipId = 'expand-pattern-clip-' + (++clipCounter);
+			var clipPath = svgRoot.ownerDocument.createElementNS(svgNS, 'clipPath');
+			clipPath.setAttribute('id', clipId);
+
+			var clipShape = el.cloneNode(true);
+			clipShape.removeAttribute('fill');
+			clipShape.removeAttribute('fill-opacity');
+			clipShape.removeAttribute('stroke');
+			clipShape.removeAttribute('stroke-width');
+			clipShape.removeAttribute('stroke-opacity');
+			clipShape.removeAttribute('style');
+			clipShape.removeAttribute('pointer-events');
+			clipShape.setAttribute('fill', 'black');
+			clipPath.appendChild(clipShape);
+
+			// Create outer group with clip path
+			var outerGroup = svgRoot.ownerDocument.createElementNS(svgNS, 'g');
+			outerGroup.setAttribute('clip-path', 'url(#' + clipId + ')');
+
+			// Preserve fill-opacity from the original element
+			var fillOpacity = el.getAttribute('fill-opacity');
+
+			if (fillOpacity != null)
+			{
+				outerGroup.setAttribute('opacity', fillOpacity);
+			}
+
+			// The clip path is in the element's parent coordinate space,
+			// so the outer group should be at the same level
+			// Create inner group with patternTransform
+			var innerGroup = svgRoot.ownerDocument.createElementNS(svgNS, 'g');
+			innerGroup.setAttribute('transform',
+				'translate(' + t.tx + ',' + t.ty + ')' +
+				((t.angle !== 0) ? ' rotate(' + (t.angle * 180 / Math.PI) + ')' : '') +
+				' scale(' + t.sx + ((t.sy !== t.sx) ? ',' + t.sy : '') + ')');
+
+			// Generate tiles by cloning pattern children
+			var patternChildren = pattern.childNodes;
+
+			for (var tx = tileMinX; tx < tileMaxX; tx++)
+			{
+				for (var ty = tileMinY; ty < tileMaxY; ty++)
+				{
+					var tileGroup = svgRoot.ownerDocument.createElementNS(svgNS, 'g');
+					tileGroup.setAttribute('transform',
+						'translate(' + (tx * pw) + ',' + (ty * ph) + ')');
+
+					for (var c = 0; c < patternChildren.length; c++)
+					{
+						if (patternChildren[c].nodeType === 1)
+						{
+							tileGroup.appendChild(patternChildren[c].cloneNode(true));
+						}
+					}
+
+					innerGroup.appendChild(tileGroup);
+				}
+			}
+
+			outerGroup.appendChild(innerGroup);
+
+			// Insert defs and group into SVG
+			var defs = svgRoot.querySelector('defs');
+
+			if (defs == null)
+			{
+				defs = svgRoot.ownerDocument.createElementNS(svgNS, 'defs');
+				svgRoot.insertBefore(defs, svgRoot.firstChild);
+			}
+
+			defs.appendChild(clipPath);
+
+			// Insert the pattern group after the element's parent group
+			// to maintain correct stacking order
+			el.parentNode.insertBefore(outerGroup, el.nextSibling);
+
+			// Remove the pattern fill from the element. The pattern's
+			// transparent regions are truly transparent (the fill color is
+			// used as the pattern line color, not as a background).
+			el.setAttribute('fill', 'none');
+			el.style.fill = '';
+		};
+
+		// Main: find all pattern-filled elements and expand them
+		var elements = svg.querySelectorAll('[fill^="url("]');
+
+		for (var i = 0; i < elements.length; i++)
+		{
+			var pattern = resolvePattern(elements[i], svg);
+
+			if (pattern != null)
+			{
+				expandElement(elements[i], pattern, svg);
+			}
+		}
+
+		// Also check elements with fill set via style attribute
+		var styledElements = svg.querySelectorAll('[style]');
+
+		for (var i = 0; i < styledElements.length; i++)
+		{
+			var style = styledElements[i].getAttribute('style');
+
+			if (style != null && style.indexOf('url(') !== -1)
+			{
+				var pattern = resolvePattern(styledElements[i], svg);
+
+				if (pattern != null)
+				{
+					expandElement(styledElements[i], pattern, svg);
+				}
+			}
+		}
+	};
+
 	/**
 	 * Adds the global fontCss configuration.
 	 */
