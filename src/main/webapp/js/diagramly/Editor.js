@@ -904,6 +904,19 @@
         	return (state.vertices.length > 0) ? model.isVertex(model.getParent(state.vertices[0])) : false;
         }},
         {name: 'editable', dispName: 'Editable', type: 'bool', defVal: true},
+        {name: 'editIcon', dispName: 'Edit Icon', type: 'bool', defVal: false},
+        {name: 'lockedGroup', dispName: 'Locked Group', type: 'enum', defVal: null,
+        	enumList: [{val: null, dispName: 'Default'}, {val: '0', dispName: 'Unlocked'}, {val: '1', dispName: 'Locked'}], isVisible: function(state, format)
+			{
+				return state.vertices.length > 0 && state.edges.length == 0;
+			}
+        },
+        {name: 'lockedGroupIcon', dispName: 'Lock Icon', type: 'enum', defVal: null,
+        	enumList: [{val: null, dispName: 'Default'}, {val: '0', dispName: 'Disabled'}, {val: '1', dispName: 'Visible'}], isVisible: function(state, format)
+			{
+				return state.vertices.length > 0 && state.edges.length == 0;
+			}
+        },
         {name: 'metaEdit', dispName: 'Edit Dialog', type: 'bool', defVal: false},
         {name: 'backgroundOutline', dispName: 'Background Outline', type: 'bool', defVal: false},
         {name: 'movable', dispName: 'Movable', type: 'bool', defVal: true},
@@ -6712,6 +6725,11 @@
 						var nullValue = 'null';
 						var nullOption = null;
 						setElementPos(td, select);
+						select.style.boxSizing = 'border-box';
+						select.style.height = '100%';
+						select.style.padding = '0';
+						select.style.margin = '0';
+						select.style.border = '0';
 
 						for (var i = 0; i < pEnumList.length; i++)
 						{
@@ -6753,11 +6771,15 @@
 						{
 							valueDiv.innerHTML = '';
 
+							// Map the null sentinel back to actual null so op.val == ... matches.
+							var effectiveVal = (select[select.selectedIndex] == nullOption ||
+								select.value == nullValue) ? null : select.value;
+
 							for (let i = 0; i < pEnumList.length; i++)
 							{
 								let op = pEnumList[i];
 
-								if (op.val == select.value)
+								if (op.val == effectiveVal)
 								{
 									mxUtils.write(valueDiv, mxResources.get(op.dispName, null, op.dispName));
 									break;

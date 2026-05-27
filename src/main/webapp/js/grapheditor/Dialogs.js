@@ -2297,6 +2297,13 @@ var EditDiagramDialog = function(editorUi)
 	buttons.style.marginTop = '14px';
 	buttons.style.flexShrink = '0';
 
+	if (!editorUi.isOffline())
+	{
+		var helpIcon = editorUi.createHelpIcon(EditDiagramDialog.helpLink);
+		helpIcon.style.marginRight = 'auto';
+		buttons.appendChild(helpIcon);
+	}
+
 	var cancelBtn = mxUtils.button(mxResources.get('cancel'), function()
 	{
 		editorUi.hideDialog();
@@ -2311,25 +2318,21 @@ var EditDiagramDialog = function(editorUi)
 
 	var select = document.createElement('select');
 	select.style.textOverflow = 'ellipsis';
+	select.style.marginLeft = '8px';
+	select.style.height = '30px';
 	select.style.width = '196px';
-	select.className = 'geBtn';
 
-	if (editorUi.editor.graph.isEnabled())
-	{
-		var applyOption = document.createElement('option');
-		applyOption.setAttribute('value', 'apply');
-		mxUtils.write(applyOption, mxResources.get('apply',
-			null, 'Update Existing Drawing'));
-		select.appendChild(applyOption);
-	}
+	var placeholderOption = document.createElement('option');
+	placeholderOption.setAttribute('value', '');
+	placeholderOption.setAttribute('disabled', 'disabled');
+	placeholderOption.setAttribute('selected', 'selected');
+	mxUtils.write(placeholderOption, mxResources.get('select') + '...');
+	select.appendChild(placeholderOption);
 
-	if (editorUi.editor.graph.isEnabled())
-	{
-		var insertOption = document.createElement('option');
-		insertOption.setAttribute('value', 'insert');
-		mxUtils.write(insertOption, mxResources.get('insert'));
-		select.appendChild(insertOption);
-	}
+	var copyOption = document.createElement('option');
+	copyOption.setAttribute('value', 'copy');
+	mxUtils.write(copyOption, mxResources.get('copyDiagramToClipboard'));
+	select.appendChild(copyOption);
 
 	var newOption = document.createElement('option');
 	newOption.setAttribute('value', 'new');
@@ -2340,21 +2343,82 @@ var EditDiagramDialog = function(editorUi)
 		select.appendChild(newOption);
 	}
 
-	buttons.appendChild(select);
+	var extractTextAction = editorUi.actions.get('extractText');
+	var hasExtractText = extractTextAction != null;
+	var hasAnonymize = typeof editorUi.anonymizeXml == 'function';
 
-	var okBtn = mxUtils.button(mxResources.get('ok'), function()
+	if (hasExtractText)
 	{
+		var extractOption = document.createElement('option');
+		extractOption.setAttribute('value', 'extractText');
+		mxUtils.write(extractOption, mxResources.get('extractText'));
+		select.appendChild(extractOption);
+	}
+
+	if (hasAnonymize)
+	{
+		var anonymizeOption = document.createElement('option');
+		anonymizeOption.setAttribute('value', 'anonymize');
+		mxUtils.write(anonymizeOption, mxResources.get('anonymize'));
+		select.appendChild(anonymizeOption);
+	}
+
+	mxEvent.addListener(select, 'change', function()
+	{
+		var value = select.value;
 		// Removes all illegal control characters before parsing
 		var data = Graph.zapGremlins(mxUtils.trim(textarea.value));
 		var error = null;
 
-		if (select.value == 'new')
+		if (value == 'new')
 		{
 			editorUi.hideDialog();
 			editorUi.editor.editAsNew(data);
 		}
-		else if (select.value == 'apply')
+		else if (value == 'copy')
 		{
+			editorUi.writeTextToClipboard(data, function(e)
+			{
+				editorUi.handleError(e);
+			}, function()
+			{
+				editorUi.alert(mxResources.get('copiedToClipboard'));
+			});
+		}
+		else if (value == 'extractText')
+		{
+			extractTextAction.funct(true);
+		}
+		else if (value == 'anonymize')
+		{
+			try
+			{
+				textarea.value = editorUi.anonymizeXml(data);
+			}
+			catch (e)
+			{
+				error = e;
+			}
+		}
+
+		select.value = '';
+
+		if (error != null)
+		{
+			editorUi.handleError(error);
+		}
+	});
+
+	buttons.appendChild(select);
+
+	if (editorUi.editor.graph.isEnabled())
+	{
+		var applyBtn = mxUtils.button(mxResources.get('apply'), function()
+		{
+			// Removes all illegal control characters before parsing
+			var data = Graph.zapGremlins(mxUtils.trim(textarea.value));
+			var error = null;
+
 			try
 			{
 				var node = mxUtils.parseXml(data).documentElement;
@@ -2384,40 +2448,15 @@ var EditDiagramDialog = function(editorUi)
 			{
 				error = e;
 			}
-		}
-		else if (select.value == 'insert')
-		{
-			editorUi.editor.graph.model.beginUpdate();
-			try
-			{
-				var doc = mxUtils.parseXml(data);
-				var model = new mxGraphModel();
-				var codec = new mxCodec(doc);
-				codec.decode(doc.documentElement, model);
 
-				var children = model.getChildren(model.getChildAt(model.getRoot(), 0));
-				editorUi.editor.graph.setSelectionCells(editorUi.editor.graph.importCells(children));
-
-				// LATER: Why is hideDialog between begin-/endUpdate faster?
-				editorUi.hideDialog();
-			}
-			catch (e)
+			if (error != null)
 			{
-				error = e;
+				editorUi.handleError(error);
 			}
-			finally
-			{
-				editorUi.editor.graph.model.endUpdate();
-			}
-		}
-
-		if (error != null)
-		{
-			editorUi.handleError(error);
-		}
-	});
-	okBtn.className = 'geBtn gePrimaryBtn';
-	buttons.appendChild(okBtn);
+		});
+		applyBtn.className = 'geBtn gePrimaryBtn';
+		buttons.appendChild(applyBtn);
+	}
 
 	if (!editorUi.editor.cancelFirst)
 	{
@@ -2432,6 +2471,11 @@ var EditDiagramDialog = function(editorUi)
  * 
  */
 EditDiagramDialog.showNewWindowOption = true;
+
+/**
+ * URL for the user-facing documentation of this dialog.
+ */
+EditDiagramDialog.helpLink = 'https://github.com/jgraph/drawio/discussions/5592';
 
 /**
  * Constructs a new export dialog.

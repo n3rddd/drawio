@@ -1726,6 +1726,105 @@
 	};
 	
 	/**
+	 * Returns an anonymized copy of the given diagram XML string. Walks the
+	 * parsed DOM and anonymizes cell labels (including HTML labels), user
+	 * object attributes and page names via {@link #anonymizeString}.
+	 */
+	EditorUi.prototype.anonymizeXml = function(xml)
+	{
+		var ui = this;
+		var sanitizer = document.createElement('div');
+
+		function anonymizeAttr(elt, name, htmlAware)
+		{
+			if (elt.hasAttribute(name))
+			{
+				var value = elt.getAttribute(name);
+
+				if (value != null && value.length > 0)
+				{
+					if (htmlAware && value.indexOf('<') >= 0)
+					{
+						sanitizer.innerHTML = Graph.sanitizeHtml(value);
+						anonymizeText(sanitizer);
+						value = sanitizer.innerHTML;
+					}
+					else
+					{
+						value = ui.anonymizeString(value);
+					}
+
+					elt.setAttribute(name, value);
+				}
+			}
+		};
+
+		function anonymizeText(node)
+		{
+			if (node.nodeValue != null)
+			{
+				node.nodeValue = ui.anonymizeString(node.nodeValue);
+			}
+
+			if (node.nodeType == mxConstants.NODETYPE_ELEMENT)
+			{
+				var tmp = node.firstChild;
+
+				while (tmp != null)
+				{
+					anonymizeText(tmp);
+					tmp = tmp.nextSibling;
+				}
+			}
+		};
+
+		function anonymizeNode(node)
+		{
+			if (node.nodeType == mxConstants.NODETYPE_ELEMENT)
+			{
+				if (node.nodeName == 'mxCell')
+				{
+					anonymizeAttr(node, 'value', true);
+				}
+				else if (node.nodeName == 'object' || node.nodeName == 'UserObject')
+				{
+					for (var i = 0; i < node.attributes.length; i++)
+					{
+						var attr = node.attributes[i];
+
+						if (attr.name != 'id' && attr.name != 'style' &&
+							attr.name != 'placeholders' && attr.name != 'vertex' &&
+							attr.name != 'edge' && attr.name != 'parent' &&
+							attr.name != 'connectable' && attr.name != 'visible' &&
+							attr.name != 'collapsed' && attr.name != 'source' &&
+							attr.name != 'target')
+						{
+							attr.value = ui.anonymizeString(attr.value);
+						}
+					}
+				}
+				else if (node.nodeName == 'diagram')
+				{
+					anonymizeAttr(node, 'name', false);
+				}
+
+				var tmp = node.firstChild;
+
+				while (tmp != null)
+				{
+					anonymizeNode(tmp);
+					tmp = tmp.nextSibling;
+				}
+			}
+		};
+
+		var doc = mxUtils.parseXml(xml);
+		anonymizeNode(doc.documentElement);
+
+		return mxUtils.getPrettyXml(doc.documentElement);
+	};
+
+	/**
 	 * Removes any values, styles and geometries from the given XML node.
 	 */
 	EditorUi.prototype.anonymizePatch = function(patch)

@@ -6761,12 +6761,48 @@ Graph.prototype.isLockedGroup = function(cell)
 
 /**
  * Returns true if the cell has the lockedGroup style key (either '0' or '1').
- * Used to decide whether the lock-toggle handle should be rendered and
- * whether double-clicks inside the group should route to the mermaid editor.
+ * Used to decide whether double-clicks inside the group should route to the
+ * mermaid editor.
  */
 Graph.prototype.hasLockedGroupStyle = function(cell)
 {
 	return cell != null && this.getCurrentCellStyle(cell)['lockedGroup'] != null;
+};
+
+/**
+ * Returns true if the lock-toggle handle should be rendered for the cell.
+ * lockedGroupIcon=0 hides the icon, lockedGroupIcon=1 forces it to show, and
+ * undefined falls back to the lockedGroup style being defined.
+ */
+Graph.prototype.isLockedGroupIconVisible = function(cell)
+{
+	if (cell == null)
+	{
+		return false;
+	}
+
+	var override = this.getCurrentCellStyle(cell)['lockedGroupIcon'];
+
+	if (override == '0')
+	{
+		return false;
+	}
+
+	if (override == '1')
+	{
+		return true;
+	}
+
+	return this.hasLockedGroupStyle(cell);
+};
+
+/**
+ * Returns true if the edit-icon handle should be rendered for the cell.
+ */
+Graph.prototype.isEditIconVisible = function(cell)
+{
+	return cell != null && mxUtils.getValue(
+		this.getCurrentCellStyle(cell), 'editIcon', '0') == '1';
 };
 
 /**
@@ -12492,7 +12528,9 @@ if (typeof mxVertexHandler !== 'undefined')
 				rows = rows && this.isTableRow(cells[i]);
 			}
 
-			return !this.isCellLocked(cell) && (this.isTargetShape(cell, cells, evt) ||
+			return !this.isCellLocked(cell) &&
+				this.getLockedGroupAncestor(cell) == null &&
+				(this.isTargetShape(cell, cells, evt) ||
 				((mxUtils.getValue(style, 'part', '0') != '1' || this.isContainer(cell)) &&
 				mxUtils.getValue(style, 'dropTarget', '1') != '0' && (mxGraph.prototype.
 				isValidDropTarget.apply(this, arguments) || this.isContainer(cell)) &&
@@ -16703,6 +16741,29 @@ if (typeof mxVertexHandler !== 'undefined')
 		};
 
 		/**
+		 * Redirects the initial cell for click-and-drag to the locked group
+		 * ancestor so descendants of a locked group cannot be dragged out.
+		 */
+		var mxGraphHandlerGetInitialCellForEvent = mxGraphHandler.prototype.getInitialCellForEvent;
+		mxGraphHandler.prototype.getInitialCellForEvent = function(me)
+		{
+			var cell = mxGraphHandlerGetInitialCellForEvent.apply(this, arguments);
+
+			if (cell != null)
+			{
+				var anc = this.graph.getLockedGroupAncestor(
+					this.graph.model.getParent(cell));
+
+				if (anc != null)
+				{
+					cell = anc;
+				}
+			}
+
+			return cell;
+		};
+
+		/**
 		 * Hints on handlers
 		 */
 		function createHint()
@@ -17012,7 +17073,7 @@ if (typeof mxVertexHandler !== 'undefined')
 		var vertexHandlerIsCustomHandleVisible = mxVertexHandler.prototype.isCustomHandleVisible;
 		mxVertexHandler.prototype.isCustomHandleVisible = function(handle)
 		{
-			return handle.tableHandle || handle.lockHandle ||
+			return handle.tableHandle || handle.lockHandle || handle.editIconHandle ||
 				(vertexHandlerIsCustomHandleVisible.apply(this, arguments) &&
 				(!this.graph.isTable(this.state.cell) ||
 				this.graph.isCellSelected(this.state.cell)));
@@ -17332,9 +17393,9 @@ if (typeof mxVertexHandler !== 'undefined')
 				}
 			}
 			
-			// Adds lock-toggle handle whenever the lockedGroup style key is
-			// present (renders a lock icon when locked, unlock icon when not).
-			if (this.graph.hasLockedGroupStyle(this.state.cell) &&
+			// Adds lock-toggle handle when the lockedGroupIcon visibility
+			// rule says so (renders a lock icon when locked, unlock when not).
+			if (this.graph.isLockedGroupIconVisible(this.state.cell) &&
 				this.graph.isCellMovable(this.state.cell))
 			{
 				if (handles == null)
@@ -17365,13 +17426,14 @@ if (typeof mxVertexHandler !== 'undefined')
 				{
 					if (this.shape != null)
 					{
-						// Top-left corner 12px outside / 12px above, mirroring the
-						// rotate handle's offset. Rotated around the cell center by
-						// the cell's current rotation so the icon tracks the rotated
-						// corner, and the icon shape itself rotates to match.
+						// Top-left corner. Mirrors the rotate handle: pads outward
+						// for small bounds via getHandlePadding so the icon stays
+						// clear of the resize sizers. Rotated around the cell center
+						// so the icon tracks the rotated corner.
+						var padding = self.getHandlePadding();
 						var pt = new mxPoint(
-							self.bounds.x - 12,
-							self.bounds.y - 12);
+							self.bounds.x - 12 - padding.x / 2,
+							self.bounds.y - 12 - padding.y / 2);
 						var deg = Number((self.currentAlpha != null) ? self.currentAlpha :
 							(self.state.style[mxConstants.STYLE_ROTATION] || '0'));
 						var alpha = mxUtils.toRadians(deg);
@@ -17404,6 +17466,68 @@ if (typeof mxVertexHandler !== 'undefined')
 					{
 						graph.getModel().endUpdate();
 					}
+				};
+
+				handles.push(handle);
+			}
+
+			// Adds edit-icon handle when editIcon=1 (pen icon in bottom-right).
+			// Clicking it triggers editing on the cell.
+			if (this.graph.isEditIconVisible(this.state.cell))
+			{
+				if (handles == null)
+				{
+					handles = [];
+				}
+
+				var self = this;
+				var graph = this.graph;
+				var cell = this.state.cell;
+				var size = 16;
+
+				var shape = new mxImageShape(new mxRectangle(0, 0, size, size),
+					HoverIcons.prototype.editHandle.src);
+				shape.preserveImageAspect = false;
+
+				var handle = new mxHandle(this.state, 'pointer', null, shape);
+				handle.editIconHandle = true;
+
+				handle.setPosition = function() {};
+				handle.positionChanged = function() {};
+				handle.reset = function() {};
+
+				handle.redraw = function()
+				{
+					if (this.shape != null)
+					{
+						var padding = self.getHandlePadding();
+						var pt = new mxPoint(
+							self.bounds.x - 12 - padding.x / 2,
+							self.bounds.y + self.bounds.height + 12 + padding.y / 2);
+						var deg = Number((self.currentAlpha != null) ? self.currentAlpha :
+							(self.state.style[mxConstants.STYLE_ROTATION] || '0'));
+						var alpha = mxUtils.toRadians(deg);
+
+						if (alpha != 0)
+						{
+							var ct = new mxPoint(self.state.getCenterX(),
+								self.state.getCenterY());
+							pt = mxUtils.getRotatedPoint(pt,
+								Math.cos(alpha), Math.sin(alpha), ct);
+						}
+
+						this.shape.bounds.width = size;
+						this.shape.bounds.height = size;
+						this.shape.bounds.x = pt.x - size / 2;
+						this.shape.bounds.y = pt.y - size / 2;
+						this.shape.rotation = deg;
+						this.shape.redraw();
+					}
+				};
+
+				handle.execute = function(me)
+				{
+					graph.startEditingAtCell(cell);
 				};
 
 				handles.push(handle);
@@ -17667,7 +17791,12 @@ if (typeof mxVertexHandler !== 'undefined')
 				{
 					for (var i = 0; i < this.customHandles.length; i++)
 					{
+						// Skip lock and edit icon handles: they position themselves
+						// using the result of this function, so they would cause
+						// oscillating overlap detection.
 						if (this.customHandles[i] != null &&
+							!this.customHandles[i].lockHandle &&
+							!this.customHandles[i].editIconHandle &&
 							this.customHandles[i].shape != null &&
 							this.customHandles[i].shape.bounds != null)
 						{
@@ -17916,6 +18045,10 @@ if (typeof mxVertexHandler !== 'undefined')
 		HoverIcons.prototype.unlockHandle = Graph.createSvgImage(16, 16,
 			'<path stroke="' + HoverIcons.prototype.arrowFill + '" stroke-width="0.7" fill="' + HoverIcons.prototype.arrowFill +
 				'" d="M18 8h-1V6c0-2.76-2.24-5-5-5-2.28 0-4.27 .54-4.84 2.75-.14.54.18 1.08.72 1.22.53.14 1.08-.18 1.22-.72C9.44 3.93 10.63 3 12 3c1.65 0 3 1.35 3 3v2H6c-1.1 0-2 .9-2 2v10c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V10c0-1.1-.9-2-2-2zm0 12H6V10h12v10zm-6-3c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2z"/>',
+				24, 24);
+		HoverIcons.prototype.editHandle = Graph.createSvgImage(16, 16,
+			'<path stroke="' + HoverIcons.prototype.arrowFill + '" stroke-width="0.7" fill="' + HoverIcons.prototype.arrowFill +
+				'" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>',
 				24, 24);
 	
 		mxConstraintHandler.prototype.pointImage = Graph.createSvgImage(5, 5,
@@ -18876,6 +19009,26 @@ if (typeof mxVertexHandler !== 'undefined')
 			}
 
 			vertexHandlerRedrawHandles.apply(this);
+
+			// Repositions the lock and edit icon handles after the base redraw
+			// so they pick up the final handle padding. They depend on the
+			// start-size custom handle for overlap detection in getHandlePadding,
+			// but that handle is only refreshed during the base redraw and (for
+			// hover hit-testing) must stay last in the custom handle array, so it
+			// is redrawn after them. Mirrors the rotation and connect handles,
+			// which are also positioned after the base call.
+			if (this.customHandles != null)
+			{
+				for (var i = 0; i < this.customHandles.length; i++)
+				{
+					if (this.customHandles[i] != null &&
+						(this.customHandles[i].lockHandle ||
+						this.customHandles[i].editIconHandle))
+					{
+						this.customHandles[i].redraw();
+					}
+				}
+			}
 
 			// Rotates the rotation handle image itself so it visually matches
 			// the cell's orientation (base mxVertexHandler only translates it

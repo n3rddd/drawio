@@ -46,6 +46,8 @@
 	Sidebar.prototype.gcp = ['Cards', 'Big Data', 'Compute', 'Developer Tools', 'Extras', 'Identity and Security', 'Machine Learning', 'Management Tools', 'Networking', 'Storage Databases'];
 	
 	Sidebar.prototype.gcp2 = ['Paths', 'Zones', 'Service Cards', 'Compute', 'API Management', 'Security', 'Data Analytics', 'Data Transfer', 'Cloud AI', 'Internet of Things', 'Databases', 'Storage', 'Management Tools', 'Networking', 'Developer Tools', 'Expanded Product Cards', 'User Device Cards', 'Product Cards', 'General Icons', 'Icons AI and Machine Learning', 'Icons Compute', 'Icons Serverless', 'Icons Data Analytics', 'Icons Operations', 'Icons Networking', 'Icons CI CD', 'Icons Integration Services', 'Icons API Management', 'Icons Internet of Things', 'Icons Databases', 'Icons Storage', 'Icons Security', 'Icons Migration', 'Icons Hybrid and Multi Cloud', 'Icons Open Source Icons'];
+
+	Sidebar.prototype.gcp3 = ['Categories', 'Core Products'];
 	
 	Sidebar.prototype.gcpicons = ['AI and Machine Learning', 'API Management', 'Compute', 'Data Analytics', 'Databases', 'Developer Tools', 'Expanded Product Card Icons', 'Generic', 'Hybrid and Multi Cloud', 'Security', 'Internet of Things', 'Management Tools', 'Migration', 'Networking', 'Open Source Icons', 'Storage'];
 	
@@ -152,6 +154,7 @@
            	                           {id: 'signs', prefix: 'signs', libs: Sidebar.prototype.signs},
            	                           {id: 'gcp', prefix: 'gcp', libs: Sidebar.prototype.gcp},
            	                           {id: 'gcp2', prefix: 'gcp2', libs: Sidebar.prototype.gcp2},
+           	                           {id: 'gcp3', prefix: 'gcp3', libs: Sidebar.prototype.gcp3},
            	                           {id: 'gcpicons', prefix: 'gcpicons', libs: Sidebar.prototype.gcpicons},
            	                           {id: 'rack', prefix: 'rack', libs: Sidebar.prototype.rack},
            	                           {id: 'electrical', prefix: 'electrical', libs: Sidebar.prototype.electrical},
@@ -531,6 +534,7 @@
 								{title: 'Citrix (legacy)', id: 'citrix', image: IMAGE_PATH + '/sidebar-citrix.png'},
 								{title: 'Dynamics365', id: 'dynamics365', image: IMAGE_PATH + '/sidebar-dynamics365.png'},
 								{title: 'Google Cloud Platform', id: 'gcp2', image: IMAGE_PATH + '/sidebar-gcp2.png'},
+								{title: 'Google Cloud Platform 2026', id: 'gcp3', image: IMAGE_PATH + '/sidebar-gcp3.png'},
 								{title: 'GCP Icons', id: 'gcpicons', image: IMAGE_PATH + '/sidebar-gcpicons.png'},
 								{title: 'IBM', id: 'ibm', image: IMAGE_PATH + '/sidebar-ibm.png'},
 								{title: 'IBM Cloud', id: 'ibm_cloud', image: IMAGE_PATH + '/sidebar-ibmcloud.png'},
@@ -1494,6 +1498,7 @@
 		this.addCitrix2Palette();
 		this.addCitrixPalette();
 		this.addDynamics365Palette();
+		this.addGCP3Palette();
 		this.addGCP2Palette();
 		this.addGCPIconsPalette();
 		this.addIBMPalette();

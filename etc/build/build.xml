@@ -205,6 +205,7 @@ OUTPUT FILES (in src/main/webapp/js/):
 				<file name="Sidebar-FluidPower.js" />
 				<file name="Sidebar-GCP.js" />
 				<file name="Sidebar-GCP2.js" />
+				<file name="Sidebar-GCP3.js" />
 				<file name="Sidebar-GCPIcons.js" />
 				<file name="Sidebar-Gmdl.js" />
 				<file name="Sidebar-IBM.js" />

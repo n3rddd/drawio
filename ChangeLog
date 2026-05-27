@@ -1,3 +1,42 @@
+27-MAY-2026: 30.0.4
+
+- Adds GCP3 to build
+- Build of version 30.0.4
+
+27-MAY-2026: 30.0.4
+
+
+
+26-MAY-2026: 30.0.3
+
+- Test Cloud Build trigger
+- Test Cloud Build trigger
+- Upgrades to JDK 21
+- Adds new GCP3 stencils. Preliminary version, content added, but many things to fix.
+- Adds new GCP3 stencils to the sidebar
+- Adds pointerEvents=1 style to GCP3 stencils and changes labels to a more conventional format
+- Adds multicolor support to some iOS7 stencils
+- Adds more multicolor options for some Rack stencils
+- Removes duplicate entry
+- Removes quotes from bool
+- Adds vertical text check to wrapping check [DID-18880]
+- Updates DOMPurify from 3.4.2 to 3.4.5
+- Adds lockedGroupIcon, editIcon styles and lock/edit handles
+- Adjusts footer position in Notion dialog to improve layout
+- Adds editPolygon option in edit menu
+- Adds line breaks for dev tooltips
+- Blocks drops and child drags inside locked groups
+- Pads lock and edit icon handles like the rotation handle
+- Adds multicolor support for IBM stencils
+- Adds multicolor support for Atlassian stencils
+- Refactors an Azure stencil, so it's in line with the others in the set
+- Adds multicolor support for a Bootstrap stencil
+- Adds multicolor support for EIP stencils
+- Adds multicolor support for a Flowchart stencil
+- Adds multicolor support for VVD stencils
+- Adds multicolor support for some Android stencils
+- Promote text and anonymize plugins to core functionality
+
 15-MAY-2026: 30.0.2
 
 - Makes some Mockup shapes multi-color flexible

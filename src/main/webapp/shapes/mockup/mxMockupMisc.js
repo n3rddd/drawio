@@ -1569,10 +1569,10 @@ mxShapeMockupPin.prototype.cst = {
 };
 
 mxShapeMockupPin.prototype.customProperties = [
-	{name: 'fillColor2', dispName: 'Fill2 Color', type: 'color', primary: 'true'},
-	{name: 'fillColor3', dispName: 'Fill3 Color', type: 'color', primary: 'true'},
-	{name: 'fillColor4', dispName: 'Fill4 Color', type: 'color', primary: 'true', defVal: '#ffffff'},
-	{name: 'strokeColor2', dispName: 'Stroke2 Color', type: 'color', primary: 'true', defVal: '#666666'}
+	{name: 'fillColor2', dispName: 'Fill2 Color', type: 'color', primary: true},
+	{name: 'fillColor3', dispName: 'Fill3 Color', type: 'color', primary: true},
+	{name: 'fillColor4', dispName: 'Fill4 Color', type: 'color', primary: true, defVal: '#ffffff'},
+	{name: 'strokeColor2', dispName: 'Stroke2 Color', type: 'color', primary: true, defVal: '#666666'}
 ];
 
 /**

@@ -519,6 +519,17 @@
 			}
 		});
 		
+		editorUi.actions.addAction('extractText', function(ignoreSelection)
+		{
+			var text = graph.getIndexableText(
+				(ignoreSelection || graph.isSelectionEmpty()) ? null :
+				graph.getSelectionCells());
+			var dlg = new EmbedDialog(editorUi, text, null,
+				null, null, mxResources.get('extractText'));
+			editorUi.showDialog(dlg.container, 450, 240, true, true);
+			dlg.init();
+		});
+
 		editorUi.actions.addAction('editShape...', mxUtils.bind(this, function()
 		{
 			if (graph.getSelectionCount() == 1)
@@ -2453,7 +2464,7 @@
 				{
 					var footer = document.createElement('div');
 					footer.style.position = 'absolute';
-					footer.style.bottom = '30px';
+					footer.style.bottom = '12px';
 					footer.style.textAlign = 'center';
 					footer.style.width = '100%';
 					footer.style.left = '0px';
@@ -4599,7 +4610,7 @@
 		{
 			this.addMenuItems(menu, ['undo', 'redo', '-', 'cut', 'copy', 'copyAsImage', 'copyAsSvg', 'paste',
 				'delete', '-', 'duplicate', '-', 'findReplace', '-', 'editData', 'editTooltip', '-',
-				'editStyle',  'editGeometry', 'editConnectionPoints', '-', 'edit', '-',
+				'editStyle',  'editGeometry', 'editPolygon', 'editConnectionPoints', '-', 'edit', '-',
 				'editLink', 'openLink', '-', 'selectVertices', 'selectEdges', 'selectAll', 'selectNone', '-',
 				'lockUnlock']);
 		})));

@@ -39,7 +39,7 @@
 			this.createVertexTemplateEntry(s2 + 'on-page_reference;', w * 0.6, h * 0.6, '', 'On-Page Reference', null, null, this.getTagsForStencil(gn, 'on-page_reference', dt).join(' ')),
 			this.createVertexTemplateEntry(s2 + 'summing_function;', w * 0.7, h * 0.7, '', 'Or', null, null, this.getTagsForStencil(gn, 'summing_function', dt).join(' ')),
 			this.createVertexTemplateEntry('shape=tape;whiteSpace=wrap;html=1;strokeWidth=2;size=0.19', w, h * 0.65, '', 'Tape', null, null, this.getTagsForStencil(gn, 'tape', dt).join(' ')),
-			this.createVertexTemplateEntry(s2 + 'parallel_mode;pointerEvents=1', w * 0.95, h * 0.4, '', 'Parallel Mode', null, null, this.getTagsForStencil(gn, 'parallel_mode', dt).join(' ')),
+			this.createVertexTemplateEntry(s2 + 'parallel_mode;accentColor=#ffff00;pointerEvents=1', w * 0.95, h * 0.4, '', 'Parallel Mode', null, null, this.getTagsForStencil(gn, 'parallel_mode', dt).join(' ')),
 			this.createVertexTemplateEntry(s3 + 'process;whiteSpace=wrap;rounded=1;size=0.14;arcSize=6;', w, h * 0.6, '', 'Predefined Process', null, null, this.getTagsForStencil(gn, 'predefined_process', dt).join(' ')),
 			this.createVertexTemplateEntry(s3 + 'hexagon;perimeter=hexagonPerimeter2;arcSize=6;size=0.27;', w, h * 0.6, '', 'Preparation', null, null, this.getTagsForStencil(gn, 'preparation', dt).join(' ')),
 			this.createVertexTemplateEntry('rounded=1;whiteSpace=wrap;html=1;absoluteArcSize=1;arcSize=14;strokeWidth=2;', w, h, '', 'Process', null, null, this.getTagsForStencil(gn, 'process', dt).join(' ')),
