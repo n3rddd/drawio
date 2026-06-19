@@ -2076,10 +2076,33 @@ function mxShapeBasicLayeredRect(bounds, fill, stroke, strokewidth)
 mxUtils.extend(mxShapeBasicLayeredRect, mxActor);
 
 mxShapeBasicLayeredRect.prototype.customProperties = [
-	{name: 'dx', dispName: 'Layer Distance', type: 'float', mix:0, defVal:10}
+	{name: 'dx', dispName: 'Layer Distance', type: 'float', mix:0, defVal:10},
+	{name: 'boundedLbl', dispName: 'Bounded Label', type: 'bool', defVal: false}
 ];
 
 mxShapeBasicLayeredRect.prototype.cst = {LAYERED_RECT : 'mxgraph.basic.layered_rect'};
+
+/**
+* Function: getLabelMargins
+*
+* Confines the label to the front rectangle if boundedLbl=1. Flips are
+* handled in mxShape.getLabelBounds via mxUtils.getDirectedBounds.
+*/
+mxShapeBasicLayeredRect.prototype.getLabelMargins = function(rect)
+{
+	if (mxUtils.getValue(this.style, 'boundedLbl', false))
+	{
+		var w = rect.width / this.scale;
+		var h = rect.height / this.scale;
+		var dx = Math.max(0, Math.min(w, parseFloat(mxUtils.getValue(this.style, 'dx', this.dx))));
+
+		dx = Math.min(w * 0.5, h * 0.5, dx) * this.scale;
+
+		return new mxRectangle(0, 0, dx, dx);
+	}
+
+	return null;
+};
 
 /**
 * Function: paintVertexShape

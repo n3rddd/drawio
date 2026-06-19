@@ -339,7 +339,7 @@ div[id*="dgeMermaidOutput-"] {
 .geDarkMode .gePropHeader,
 .geDarkMode .geStyleBtn .geAdaptiveAsset.geArrow,
 .geAtlas .geMenubar .geButtonContainer .geButton:empty,
-.geAtlas .geMenubar .geButtonContainer .geButton img.geAdaptiveAsset:not(.geDarkMode *),
+.geAtlas .geMenubar .geButtonContainer .geButton .geAdaptiveAsset:not(.geDarkMode *),
 .geAtlas .geMenubar .geButtonContainer .geButton img:last-child {
 	filter: invert(1);
 	outline: none;
@@ -1693,6 +1693,40 @@ a.geStatus>div {
 	border-radius: 50%;
 }
 
+/* Account icon: a div with a background-image (set in App.updateButtonContainer).
+   The default silhouette also carries geAdaptiveAsset so it inverts in dark mode
+   via the generic .geDarkMode .geAdaptiveAsset rule; a real account picture
+   (geUserPhoto) is cover-fitted and never inverted. See #5364. The selector
+   outweighs ".geButton > div" (which would stretch the div to width/height 100%). */
+.geButton.geRoundButton > .geUserAvatar {
+	width: 26px;
+	height: 26px;
+	border-radius: 50%;
+	background-position: center center;
+	background-repeat: no-repeat;
+	/* Scale the SVG silhouette to fill the box like the original <img> did
+	   (.geRoundButton img { width: 26px }); without this it falls back to the
+	   image's intrinsic 24px and renders too small. See #5364. */
+	background-size: contain;
+}
+
+.geButton.geRoundButton > .geUserPhoto {
+	background-size: cover;
+}
+
+/* In dark mode the parent .geButton already inverts its whole subtree
+   (.geDarkMode .geButton), which lightens the default silhouette. So the avatar
+   must NOT invert again via geAdaptiveAsset, or it double-inverts back to dark
+   (the #5364 bug). A real photo, conversely, must counter the parent invert so it
+   is never rendered as a negative. */
+.geDarkMode .geUserAvatar.geAdaptiveAsset {
+	filter: none;
+}
+
+.geDarkMode .geUserPhoto {
+	filter: invert(1);
+}
+
 .geSeparator {
 	display: inline-block;
 	background-color: #e5e5e5;
@@ -2038,6 +2072,15 @@ a.geStatus>div {
 	box-sizing: border-box;
 }
 
+/* Tall dialogs: cap the content area to the dialog's content box and let
+   it scroll. The close button (.geButton) is a positioned-absolute sibling
+   of the content so it stays at the top-right regardless of scroll. */
+.geDialog > :first-child {
+	max-height: 100%;
+	overflow-y: auto;
+	box-sizing: border-box;
+}
+
 .geDialog > .geButton {
 	top: 8px !important;
 	right: 8px !important;
@@ -2100,6 +2143,7 @@ a.geStatus>div {
 	display: flex;
 	align-items: center;
 	min-height: 28px;
+	column-gap: 8px;
 }
 
 .geDialogFormRow + .geDialogFormRow {
@@ -2173,9 +2217,12 @@ a.geStatus>div {
 	min-width: 0;
 }
 
+.geDialog .geCollapsibleTitle {
+	margin-top: 4px;
+}
+
 .geDialogInlineField label {
-	font-size: 13px;
-	color: light-dark(#6e6e73, #a0a0a0);
+	color: light-dark(#1d1d1f, #e0e0e0);
 	white-space: nowrap;
 }
 
@@ -2229,13 +2276,12 @@ a.geStatus>div {
 .geMoreShapesItem {
 	display: flex;
 	align-items: center;
-	padding: 6px 12px 6px 16px;
+	padding: 6px 0 6px 16px;
 	cursor: pointer;
 	font-size: 13px;
 	line-height: normal;
 	color: light-dark(#1d1d1f, #e0e0e0);
 	transition: background-color 0.1s ease;
-	border-bottom: light-dark(1px solid rgba(0, 0, 0, 0.04), 1px solid rgba(255, 255, 255, 0.03));
 }
 
 .geMoreShapesItem:hover {

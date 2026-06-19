@@ -1266,7 +1266,14 @@ Graph = function(container, model, renderHint, stylesheet, themes, standalone)
 			{
 				return false;
 			}
-			
+
+			// Drag cannot remove children from a transparentBounds; reparenting
+			// is only allowed via explicit menu actions (e.g. Arrange tab).
+			if (this.graph.isTransparentBounds(parent))
+			{
+				return false;
+			}
+
 			return graphHandlerShouldRemoveCellsFromParent.apply(this, arguments);
 		};
 
@@ -1603,7 +1610,25 @@ Graph.cellStyles = mxUtils.addItems(mxUtils.addItems(mxUtils.addItems(
  */
 Graph.layoutNames = ['mxHierarchicalLayout', 'mxCircleLayout', 'mxCompactTreeLayout',
 	'mxEdgeLabelLayout', 'mxFastOrganicLayout', 'mxParallelEdgeLayout',
-	'mxPartitionLayout', 'mxRadialTreeLayout', 'mxStackLayout'];
+	'mxPartitionLayout', 'mxRadialTreeLayout', 'mxStackLayout',
+	'elkLayered', 'elkTree', 'elkRadial', 'elkOrganic', 'elkStress',
+	'elkDisco', 'elkBox'];
+
+/**
+ * Maps draw.io ELK layout names to their ELK algorithm. The friendly aliases
+ * (elkTree → mrtree, elkOrganic → force) match the Arrange > Layout menu
+ * vocabulary rather than the internal ELK names, so users reading the menu
+ * and writing JSON see the same words.
+ */
+Graph.elkLayoutAlgorithms = {
+	'elkLayered': 'layered',
+	'elkTree': 'mrtree',
+	'elkRadial': 'radial',
+	'elkOrganic': 'force',
+	'elkStress': 'stress',
+	'elkDisco': 'disco',
+	'elkBox': 'box'
+};
 
 /**
  * Name of the attribute to store original CSS colors in HTML labels.
@@ -3654,6 +3679,129 @@ Graph.prototype.init = function(container)
 	}
 
 	this.initLayoutManager();
+	this.initTransparentBoundsStyleSync();
+};
+
+/**
+ * Listens for transparentBounds toggling on a vertex and, in the same model
+ * edit, keeps the stored geometry consistent with the rendering mode while
+ * leaving the children visually in place:
+ *
+ *   0 -> 1 (enable): pins the geometry at (0,0,0,0) — the visible bounds are
+ *     derived from the children from here on — and translates the children by
+ *     the old origin so they don't jump.
+ *   1 -> 0 (disable): rewrites the geometry to the bounds that were derived
+ *     from the children, then translates the children back. Without this,
+ *     switching off transparent would snap to the stale stored geometry (often
+ *     (0,0,0,0)) or leave the children outside the now-opaque box.
+ *
+ * Hooking on BEFORE_UNDO means the geometry and children changes land in the
+ * same undoable edit as the style change — one undo reverts the whole thing.
+ */
+Graph.prototype.initTransparentBoundsStyleSync = function()
+{
+	this.model.addListener(mxEvent.BEFORE_UNDO, mxUtils.bind(this, function(sender, evt)
+	{
+		var edit = evt.getProperty('edit');
+
+		if (edit == null || edit.changes == null)
+		{
+			return;
+		}
+
+		var stylesheet = this.getStylesheet();
+
+		// Snapshot length so geometry changes added below aren't re-scanned.
+		var n = edit.changes.length;
+
+		for (var i = 0; i < n; i++)
+		{
+			var change = edit.changes[i];
+
+			if (!(change instanceof mxStyleChange) ||
+				!this.model.isVertex(change.cell))
+			{
+				continue;
+			}
+
+			var oldStyle = stylesheet.getCellStyle(change.previous);
+			var newStyle = stylesheet.getCellStyle(change.style);
+			var wasTransparent = oldStyle != null &&
+				oldStyle['transparentBounds'] == 1;
+			var isTransparent = newStyle != null &&
+				newStyle['transparentBounds'] == 1;
+
+			if (wasTransparent == isTransparent)
+			{
+				continue;
+			}
+
+			var oldGeo = this.getCellGeometry(change.cell);
+
+			if (oldGeo == null)
+			{
+				continue;
+			}
+
+			if (isTransparent)
+			{
+				// Enabling: pin the stored geometry at (0,0,0,0) — the visible
+				// bounds are derived from the children from here on — and translate
+				// the children by the old origin so they stay in place.
+				if (oldGeo.x != 0 || oldGeo.y != 0)
+				{
+					var count = this.model.getChildCount(change.cell);
+
+					for (var j = 0; j < count; j++)
+					{
+						this.translateCell(this.model.getChildAt(change.cell, j),
+							oldGeo.x, oldGeo.y);
+					}
+				}
+
+				if (oldGeo.x != 0 || oldGeo.y != 0 ||
+					oldGeo.width != 0 || oldGeo.height != 0)
+				{
+					var newGeo = oldGeo.clone();
+					newGeo.x = 0;
+					newGeo.y = 0;
+					newGeo.width = 0;
+					newGeo.height = 0;
+					this.model.setGeometry(change.cell, newGeo);
+				}
+			}
+			else
+			{
+				// Disabling: rewrite the stored geometry to the bounds that were
+				// derived from the children, then translate the children back so
+				// they stay in place inside the now-opaque box.
+				var bounds = this.getTransparentBounds(change.cell);
+
+				if (bounds == null)
+				{
+					continue;
+				}
+
+				var newGeo = oldGeo.clone();
+				newGeo.x += bounds.x;
+				newGeo.y += bounds.y;
+				newGeo.width = bounds.width;
+				newGeo.height = bounds.height;
+				this.model.setGeometry(change.cell, newGeo);
+
+				if (bounds.x != 0 || bounds.y != 0)
+				{
+					var count = this.model.getChildCount(change.cell);
+
+					for (var j = 0; j < count; j++)
+					{
+						this.translateCell(this.model.getChildAt(change.cell, j),
+							-bounds.x, -bounds.y);
+					}
+				}
+			}
+		}
+	}));
 };
 
 /**
@@ -4237,6 +4385,7 @@ Graph.prototype.destroy = function()
 			(this.model.isVertex(state.cell) ||
 			shape == 'arrow' || shape == 'pipe' || shape == 'wire' ||
 			shape == 'filledEdge' || shape == 'flexArrow' ||
+			shape == 'mermaidSankeyLink' ||
 			shape == 'mxgraph.arrows2.wedgeArrow');
 	};
 	
@@ -5266,9 +5415,26 @@ Graph.prototype.destroy = function()
 				var s = Math.round(this.currentScale * 100) / 100;
 				var dx = Math.round(this.currentTranslate.x * 100) / 100;
 				var dy = Math.round(this.currentTranslate.y * 100) / 100;
+
+				// A smooth animation step (viewbox with smooth:true) arms a
+				// `transition: transform` on this node and sets
+				// armTransformTransition so the change below animates. Every
+				// other transform update (toolbar zoom/fit, wheel zoom,
+				// programmatic fit) finds the flag unset and strips the
+				// transition first, so the viewport snaps instantly instead
+				// of inheriting the animation's easing.
+				if (this.armTransformTransition)
+				{
+					this.armTransformTransition = false;
+				}
+				else if (g.style.transition != '')
+				{
+					g.style.transition = '';
+				}
+
 				g.setAttribute('transform', 'scale(' + s + ',' + s + ')' +
 					'translate(' + dx + ',' + dy + ')');
-	
+
 				// Applies workarounds only if translate has changed
 				if (prev != g.getAttribute('transform'))
 				{
@@ -5527,14 +5693,21 @@ Graph.prototype.initLayoutManager = function()
 			this.hasLayout(parent, eventName)))
 		{
 			var style = this.graph.getCellStyle(cell);
-			
+
+			// transparentBounds parents derive their size from their children and
+			// must keep geometry pinned at (0,0,0,0); disable any fill or parent
+			// resize below so the layout still positions children but never reads
+			// or writes the (0,0,0,0) parent geometry (which would collapse the
+			// children and corrupt the pin).
+			var transparentParent = this.graph.isTransparentBounds(cell);
+
 			if (style['childLayout'] == 'stackLayout')
 			{
 				var stackLayout = new mxStackLayout(this.graph, true);
-				stackLayout.resizeParentMax = mxUtils.getValue(style, 'resizeParentMax', '1') == '1';
+				stackLayout.resizeParentMax = !transparentParent && mxUtils.getValue(style, 'resizeParentMax', '1') == '1';
 				stackLayout.horizontal = mxUtils.getValue(style, 'horizontalStack', '1') == '1';
-				stackLayout.resizeParent = mxUtils.getValue(style, 'resizeParent', '1') == '1';
-				stackLayout.resizeLast = mxUtils.getValue(style, 'resizeLast', '0') == '1';
+				stackLayout.resizeParent = !transparentParent && mxUtils.getValue(style, 'resizeParent', '1') == '1';
+				stackLayout.resizeLast = !transparentParent && mxUtils.getValue(style, 'resizeLast', '0') == '1';
 				stackLayout.spacing = style['stackSpacing'] || stackLayout.spacing;
 				stackLayout.border = style['stackBorder'] || stackLayout.border;
 				stackLayout.marginLeft = style['marginLeft'] || 0;
@@ -5542,7 +5715,7 @@ Graph.prototype.initLayoutManager = function()
 				stackLayout.marginTop = style['marginTop'] || 0;
 				stackLayout.marginBottom = style['marginBottom'] || 0;
 				stackLayout.allowGaps = style['allowGaps'] || 0;
-				stackLayout.fill = true;
+				stackLayout.fill = !transparentParent;
 				
 				if (stackLayout.allowGaps)
 				{
@@ -5555,7 +5728,7 @@ Graph.prototype.initLayoutManager = function()
 			{
 				var treeLayout = new mxCompactTreeLayout(this.graph);
 				treeLayout.horizontal = mxUtils.getValue(style, 'horizontalTree', '1') == '1';
-				treeLayout.resizeParent = mxUtils.getValue(style, 'resizeParent', '1') == '1';
+				treeLayout.resizeParent = !transparentParent && mxUtils.getValue(style, 'resizeParent', '1') == '1';
 				treeLayout.sortEdges = mxUtils.getValue(style, 'sortEdges', '0') == '1';
 				treeLayout.groupPadding = mxUtils.getValue(style, 'parentPadding', 20);
 				treeLayout.levelDistance = mxUtils.getValue(style, 'treeLevelDistance', 30);
@@ -5569,7 +5742,7 @@ Graph.prototype.initLayoutManager = function()
 			{
 				var flowLayout = new mxHierarchicalLayout(this.graph, mxUtils.getValue(style,
 					'flowOrientation', mxConstants.DIRECTION_EAST));
-				flowLayout.resizeParent = mxUtils.getValue(style, 'resizeParent', '1') == '1';
+				flowLayout.resizeParent = !transparentParent && mxUtils.getValue(style, 'resizeParent', '1') == '1';
 				flowLayout.parentBorder = mxUtils.getValue(style, 'parentPadding', 20);
 				flowLayout.maintainParentLocation = true;
 				
@@ -5623,6 +5796,12 @@ Graph.prototype.initLayoutManager = function()
 /**
  * Creates an array of graph layouts from the given array of the form [{layout: name, config: obj}, ...]
  * where name is the layout constructor name and config contains the properties of the layout instance.
+ *
+ * For ELK layouts (elkLayered / elkTree / elkRadial / elkOrganic / elkStress /
+ * elkDisco / elkBox) the config is split: keys starting with `elk.` are
+ * forwarded as ELK layout options; bare keys (edgeStyle, corners, resizeNodes,
+ * preserveOrigin, rootCellIds, useViewStateSizing, respectFixedPosition,
+ * mermaidPolicy) are mapped to the ElkLayout constructor's `options` argument.
  */
 Graph.prototype.createLayouts = function(list)
 {
@@ -5630,22 +5809,37 @@ Graph.prototype.createLayouts = function(list)
 
 	for (var i = 0; i < list.length; i++)
 	{
-		if (mxUtils.indexOf(Graph.layoutNames, list[i].layout) >= 0)
+		var layoutName = list[i].layout;
+		var config = list[i].config;
+
+		if (Graph.elkLayoutAlgorithms[layoutName] != null)
+		{
+			if (typeof ElkLayout === 'undefined')
+			{
+				throw Error(mxResources.get('invalidCallFnNotFound', [layoutName]));
+			}
+
+			var split = Graph.elkConfigToOptions(config);
+			layouts.push(new ElkLayout(this,
+				Graph.elkLayoutAlgorithms[layoutName],
+				split.layoutOptions, split.options));
+		}
+		else if (mxUtils.indexOf(Graph.layoutNames, layoutName) >= 0)
 		{
 			// Handles special case of branch optimizer in orgchart
-			var layout = (list[i].layout == 'mxOrgChartLayout' && list[i].config != null) ?
-				new window[list[i].layout](this, list[i].config['branchOptimizer']) :
-				new window[list[i].layout](this);
+			var layout = (layoutName == 'mxOrgChartLayout' && config != null) ?
+				new window[layoutName](this, config['branchOptimizer']) :
+				new window[layoutName](this);
 
-			if (list[i].config != null)
+			if (config != null)
 			{
-				for (var key in list[i].config)
+				for (var key in config)
 				{
 					// Ignores branch optimizer in orgchart (handled above)
-					if (list[i].layout != 'mxOrgChartLayout' ||
+					if (layoutName != 'mxOrgChartLayout' ||
 						key != 'branchOptimizer')
 					{
-						layout[key] = list[i].config[key];
+						layout[key] = config[key];
 					}
 				}
 			}
@@ -5654,11 +5848,119 @@ Graph.prototype.createLayouts = function(list)
 		}
 		else
 		{
-			throw Error(mxResources.get('invalidCallFnNotFound', [list[i].layout]));
+			throw Error(mxResources.get('invalidCallFnNotFound', [layoutName]));
 		}
 	}
 
 	return layouts;
+};
+
+/**
+ * Splits a JSON `config` object for an ELK layout into the two argument
+ * shapes the ElkLayout constructor expects:
+ *
+ *   layoutOptions — every key starting with `elk.` (forwarded verbatim to ELK)
+ *   options       — bare keys recognized by the bridge:
+ *       edgeStyle    → edgeStyleMode
+ *       corners      → corners
+ *       resizeNodes  → applierOptions.resizeParent
+ *       preserveOrigin / rootCellIds / useViewStateSizing /
+ *       respectFixedPosition / mermaidPolicy → passed through
+ *
+ * Unknown bare keys are ignored. The function is exported on Graph so the
+ * custom layout dialog's Add dropdown can use the inverse mapping when it
+ * captures a dialog config and writes it to JSON.
+ */
+Graph.elkConfigToOptions = function(config)
+{
+	var layoutOptions = {};
+	var options = {};
+
+	if (config != null)
+	{
+		for (var key in config)
+		{
+			if (key.indexOf('elk.') === 0)
+			{
+				layoutOptions[key] = config[key];
+			}
+			else if (key === 'edgeStyle')
+			{
+				options.edgeStyleMode = config[key];
+			}
+			else if (key === 'corners')
+			{
+				options.corners = config[key];
+			}
+			else if (key === 'resizeNodes')
+			{
+				options.applierOptions = options.applierOptions || {};
+				options.applierOptions.resizeParent = !!config[key];
+			}
+			else if (key === 'preserveOrigin' || key === 'useViewStateSizing' ||
+				key === 'respectFixedPosition' || key === 'mermaidPolicy' ||
+				key === 'includeEdgeLabels' || key === 'includeVertexLabels' ||
+				key === 'portSpread')
+			{
+				options[key] = config[key];
+			}
+			else if (key === 'rootCellIds')
+			{
+				options.rootCellIds = config[key];
+			}
+		}
+	}
+
+	return {layoutOptions: layoutOptions, options: options};
+};
+
+/**
+ * Inverse of elkConfigToOptions: takes the (layoutOptions, runOptions) pair
+ * built by the ELK config dialog and produces a flat `config` object suitable
+ * for the custom-layout JSON. Only fields that actually deviate from defaults
+ * are written, so saved JSON stays compact.
+ */
+Graph.elkOptionsToConfig = function(layoutOptions, runOptions)
+{
+	var config = {};
+
+	if (layoutOptions != null)
+	{
+		for (var key in layoutOptions)
+		{
+			config[key] = layoutOptions[key];
+		}
+	}
+
+	if (runOptions != null)
+	{
+		if (runOptions.edgeStyleMode != null && runOptions.edgeStyleMode !== 'auto')
+		{
+			config.edgeStyle = runOptions.edgeStyleMode;
+		}
+
+		if (runOptions.corners != null && runOptions.corners !== 'keep')
+		{
+			config.corners = runOptions.corners;
+		}
+
+		if (runOptions.applierOptions != null && runOptions.applierOptions.resizeParent === true)
+		{
+			config.resizeNodes = true;
+		}
+
+		if (runOptions.preserveOrigin === false)
+		{
+			config.preserveOrigin = false;
+		}
+
+		if (runOptions.rootCellIds != null && runOptions.rootCellIds.length > 0)
+		{
+			config.rootCellIds = runOptions.rootCellIds.slice();
+		}
+	}
+
+	return config;
 };
 
 /**
@@ -6855,6 +7157,31 @@ Graph.prototype.selectCellForEvent = function(cell, evt)
 		cell = anc;
 	}
 
+	// Click cycle through a transparentBounds chain. isPropagateSelectionCell
+	// stops the upward walk at a transparentBounds boundary, so for a child in
+	// a regular group in a transparentBounds group the cycle is:
+	//   1. group (first non-transparentBounds ancestor of the click)
+	//   2. child (propagation now stops at child because group is selected)
+	//   3. outer transparentBounds parent (propagation walks up past child)
+	// The drill-down step (selected is a strict ancestor of cell) keeps cell
+	// as-is; the escalate step (cell is at-or-above selected with a
+	// transparentBounds parent above it) walks one level out.
+	if (cell != null && !this.isToggleEvent(evt) && this.getSelectionCount() == 1)
+	{
+		var selected = this.getSelectionCell();
+
+		if (selected != null &&
+			(selected == cell || this.model.isAncestor(cell, selected)))
+		{
+			var parent = this.model.getParent(cell);
+
+			if (parent != null && this.isTransparentBounds(parent))
+			{
+				cell = parent;
+			}
+		}
+	}
+
 	if (!mxEvent.isShiftDown(evt) || this.isSelectionEmpty() ||
 		!this.selectTableRange(this.getSelectionCell(), cell))
 	{
@@ -7889,6 +8216,677 @@ Graph.prototype.isContainer = function(cell)
 };
 
 /**
+ * Returns true for cells with transparentBounds=1. A transparentBounds has its
+ * stored geometry pinned at (0,0,0,0); its visible bounds are derived from
+ * the union of its children, and dragging the group translates the children
+ * rather than the group itself.
+ */
+Graph.prototype.isTransparentBounds = function(cell)
+{
+	var style = this.getCurrentCellStyle(cell);
+
+	return style['transparentBounds'] == '1';
+};
+
+/**
+ * Returns true when the cell should show a draggable move handle icon at the
+ * top-left of its bounds. Controlled by the moveIcon style key; defaults to
+ * true for transparentBounds cells, false otherwise.
+ */
+Graph.prototype.isMoveIconVisible = function(cell)
+{
+	var style = this.getCurrentCellStyle(cell);
+	var value = style['moveIcon'];
+
+	if (value != null)
+	{
+		return value == '1';
+	}
+
+	return this.isTransparentBounds(cell);
+};
+
+/**
+ * Returns the cells to be dragged when a drag is started on the move icon
+ * of the given cell (see isMoveIconVisible), or null to let mxGraphHandler
+ * derive the drag set from the cell itself. Overridden in Trees.js to drag
+ * the whole subtree of a tree cell.
+ */
+Graph.prototype.getMoveIconDragCells = function(cell)
+{
+	return null;
+};
+
+/**
+ * Returns the diagonal offset (in screen pixels) to push a corner icon
+ * outward by, so it doesn't overlap the corresponding corner icon of a
+ * descendant cell (in the active handler set) that shares this cell's
+ * corner. cornerX, cornerY identify which corner of the cell is being
+ * decorated (in screen coordinates). predicate(cell) is called on each
+ * candidate descendant and must return true only when that descendant
+ * actually renders the same icon type — so a cell with no overlapping
+ * icon below doesn't get shifted needlessly.
+ *
+ * The outermost cell (with the most matching descendants) gets the
+ * largest offset; the innermost gets zero so its icon sits at the
+ * corner closest to the content. The caller adds the returned value in
+ * its corner's outward direction.
+ *
+ * The handler set is derived from the current selection rather than
+ * read out of selectionCellsHandler.handlers, because the dict is
+ * populated incrementally during refresh — when an existing parent
+ * handler is reused and redraws itself, the new child handler may not
+ * be in the dict yet.
+ */
+Graph.prototype.getNestedCornerIconOffset = function(cell, cornerX, cornerY, predicate)
+{
+	var model = this.model;
+	var view = this.view;
+	var selCells = this.getSelectionCells();
+	var seen = new mxDictionary();
+	var count = 0;
+
+	for (var i = 0; i < selCells.length; i++)
+	{
+		var sel = selCells[i];
+
+		if (sel == cell)
+		{
+			continue;
+		}
+
+		// Walk from sel up toward cell, collecting path cells. If cell
+		// is never reached, sel is not a descendant of cell.
+		var pathCells = [sel];
+		var p = model.getParent(sel);
+
+		while (p != null && p != cell)
+		{
+			pathCells.push(p);
+			p = model.getParent(p);
+		}
+
+		if (p != cell)
+		{
+			continue;
+		}
+
+		for (var j = 0; j < pathCells.length; j++)
+		{
+			var pc = pathCells[j];
+
+			if (seen.get(pc) != null)
+			{
+				continue;
+			}
+
+			seen.put(pc, true);
+
+			// Cells with a vertex handler in this view:
+			//   - the selected cell (sel), always
+			//   - transparentBounds ancestors of selected cells (added
+			//     by the getHandledSelectionCells override above)
+			if (pc != sel && !this.isTransparentBounds(pc))
+			{
+				continue;
+			}
+
+			if (!predicate(pc))
+			{
+				continue;
+			}
+
+			var dState = view.getState(pc);
+
+			if (dState == null)
+			{
+				continue;
+			}
+
+			var corners = [
+				[dState.x, dState.y],
+				[dState.x + dState.width, dState.y],
+				[dState.x, dState.y + dState.height],
+				[dState.x + dState.width, dState.y + dState.height]
+			];
+
+			for (var k = 0; k < corners.length; k++)
+			{
+				if (Math.abs(corners[k][0] - cornerX) < 16 &&
+					Math.abs(corners[k][1] - cornerY) < 16)
+				{
+					count++;
+					break;
+				}
+			}
+		}
+	}
+
+	// 16 px per level matches the icon size, so adjacent levels' icons
+	// touch corner-to-corner without overlap and without a wasted gap.
+	return count * 16;
+};
+
+/**
+ * Returns the number of transparentBounds cells nested anywhere below
+ * cell in the model tree. Used to scale outward selection-border padding
+ * for transparentBounds groups: the outermost group has the most nested
+ * descendants, so it gets the widest border wrapping the inner cells'
+ * borders.
+ *
+ * Returns 0 for cells that aren't transparentBounds — only
+ * transparentBounds=1 groups participate. The count is a static property
+ * of the model tree, not the current selection, so the outward padding
+ * remains stable regardless of which descendant happens to be selected.
+ */
+Graph.prototype.getNestedTransparentBoundsCount = function(cell)
+{
+	if (!this.isTransparentBounds(cell))
+	{
+		return 0;
+	}
+
+	var model = this.model;
+	var graph = this;
+	var count = 0;
+
+	var visit = function(c)
+	{
+		var n = model.getChildCount(c);
+
+		for (var i = 0; i < n; i++)
+		{
+			var child = model.getChildAt(c, i);
+
+			if (graph.isTransparentBounds(child))
+			{
+				count++;
+			}
+
+			visit(child);
+		}
+	};
+
+	visit(cell);
+
+	return count;
+};
+
+/**
+ * Returns true when the cell should show the connect handle (the arrow that
+ * starts a new edge). The connectIcon style overrides the global default
+ * Editor.showConnectHandle on a per-cell basis.
+ */
+Graph.prototype.isConnectIconVisible = function(cell)
+{
+	var style = this.getCurrentCellStyle(cell);
+	var value = style['connectIcon'];
+
+	if (value != null)
+	{
+		return value == '1';
+	}
+
+	return Editor.showConnectHandle;
+};
+
+/**
+ * Returns true for a transparentBounds cell that should be selected before
+ * its children on click (the standard transparentBounds behaviour selects
+ * children directly and escalates to the group on a repeated click).
+ * Controlled by selectParentFirst=1 in the style; defaults to false.
+ */
+Graph.prototype.isSelectParentFirst = function(cell)
+{
+	var style = this.getCurrentCellStyle(cell);
+
+	return style['selectParentFirst'] == '1';
+};
+
+/**
+ * Parses a CSS-style padding string into {n, e, s, w}.
+ * - 1 value: all four sides
+ * - 2 values: vertical, horizontal
+ * - 3 values: top, horizontal, bottom
+ * - 4 values: top, right, bottom, left (CSS TRBL order, clockwise)
+ */
+Graph.prototype.parsePadding = function(value)
+{
+	var str = (value != null) ? String(value) : '';
+
+	// Style values are URI-encoded when written from the properties panel,
+	// which turns the space separators into %20. Decode so the split below
+	// recognises them.
+	try
+	{
+		str = decodeURIComponent(str);
+	}
+	catch (e)
+	{
+		// keep str as-is
+	}
+
+	var parts = str.trim().split(/\s+/);
+	var nums = parts.map(function(p)
+	{
+		var n = parseFloat(p);
+		return isNaN(n) ? 0 : n;
+	});
+
+	if (nums.length === 1)
+	{
+		return {n: nums[0], e: nums[0], s: nums[0], w: nums[0]};
+	}
+
+	if (nums.length === 2)
+	{
+		return {n: nums[0], e: nums[1], s: nums[0], w: nums[1]};
+	}
+
+	if (nums.length === 3)
+	{
+		return {n: nums[0], e: nums[1], s: nums[2], w: nums[1]};
+	}
+
+	return {n: nums[0], e: nums[1], s: nums[2], w: nums[3]};
+};
+
+/**
+ * Returns the per-side padding (in graph units) between a transparentBounds
+ * cell and the union of its children as {n, e, s, w}. Reads the standard
+ * groupPadding style key (CSS-style 1/2/3/4 values, space-separated) with a
+ * default of 0 (used only in the transparentBounds branch of updateCellState).
+ */
+Graph.prototype.getTransparentBoundsPadding = function(cell)
+{
+	var style = this.getCurrentCellStyle(cell);
+
+	return this.parsePadding(mxUtils.getValue(style,
+		mxConstants.STYLE_GROUP_PADDING, 0));
+};
+
+/**
+ * Invalidates the cached state of every transparentBounds ancestor of the
+ * given cell so the next view validation re-derives the group bounds from
+ * the current child geometries. When includeSelf is true the search starts
+ * at the cell itself rather than at its parent (used for the previous
+ * parent of a mxChildChange, which may itself be the transparentBounds that
+ * just lost a child).
+ */
+Graph.prototype.invalidateTransparentBoundsAncestors = function(cell, includeSelf)
+{
+	var c = (includeSelf && cell != null) ? cell :
+		(cell != null) ? this.model.getParent(cell) : null;
+
+	while (c != null)
+	{
+		if (this.isTransparentBounds(c))
+		{
+			// includeEdges=true: the group's own model geometry never changes
+			// (only its child-derived state does), so the base change handling
+			// never invalidates edges connected to the group. Without this they
+			// keep their stale terminal points and visibly detach from the group
+			// until an unrelated re-validate (zoom/resize/refresh). This runs from
+			// processChange (model-commit time), not during the live drag preview,
+			// so it does not reintroduce the mid-drag churn noted on processChange.
+			this.view.invalidate(c, false, true);
+		}
+
+		c = this.model.getParent(c);
+	}
+};
+
+/**
+ * Hooks model changes so transparentBounds ancestors are invalidated on
+ * geometry/parent changes only. The previous approach overrode view.invalidate
+ * unconditionally, which also fired during mxVertexHandler.updateLivePreview
+ * (called to re-route connected edges) and caused the resized child's live
+ * preview to shift as the group was repeatedly re-validated mid-drag.
+ */
+var graphProcessChange = Graph.prototype.processChange;
+Graph.prototype.processChange = function(change)
+{
+	graphProcessChange.apply(this, arguments);
+
+	if (change instanceof mxChildChange)
+	{
+		this.invalidateTransparentBoundsAncestors(change.child);
+		this.invalidateTransparentBoundsAncestors(change.previous, true);
+	}
+	else if (change instanceof mxGeometryChange ||
+		change instanceof mxTerminalChange)
+	{
+		this.invalidateTransparentBoundsAncestors(change.cell);
+	}
+};
+
+/**
+ * Returns the bounding box of the children of a transparentBounds in the
+ * cell's own local coordinate space, or null if the group has no children
+ * with geometry. Nested transparentBoundss contribute their own padded
+ * bounds via getTransparentBounds (which is itself in the nested cell's
+ * local space) translated by the nested cell's geo.x/y into this cell's
+ * local space, so each level's padding accumulates outward and non-zero
+ * nested geometry is handled correctly.
+ */
+Graph.prototype.getTransparentChildBounds = function(cell)
+{
+	var result = null;
+	var count = this.model.getChildCount(cell);
+
+	for (var i = 0; i < count; i++)
+	{
+		var child = this.model.getChildAt(cell, i);
+		var rect = null;
+
+		if (this.model.isVertex(child))
+		{
+			var geo = this.getCellGeometry(child);
+
+			if (geo != null && !geo.relative)
+			{
+				if (this.isTransparentBounds(child))
+				{
+					var local = this.getTransparentBounds(child);
+
+					if (local != null)
+					{
+						rect = new mxRectangle(geo.x + local.x,
+							geo.y + local.y, local.width, local.height);
+					}
+				}
+				else
+				{
+					rect = new mxRectangle(geo.x, geo.y,
+						geo.width, geo.height);
+				}
+			}
+		}
+		else if (this.model.isEdge(child))
+		{
+			// Edge children contribute their waypoints and any disconnected
+			// terminal points (stored relative to the group — the same local
+			// space as vertex geometry) so an edge that bows outside the vertex
+			// union, or a group whose only children are edges, still expands the
+			// derived bounds instead of being ignored.
+			var geo = this.getCellGeometry(child);
+
+			if (geo != null)
+			{
+				var pts = [];
+
+				if (this.model.getTerminal(child, true) == null &&
+					geo.getTerminalPoint(true) != null)
+				{
+					pts.push(geo.getTerminalPoint(true));
+				}
+
+				if (this.model.getTerminal(child, false) == null &&
+					geo.getTerminalPoint(false) != null)
+				{
+					pts.push(geo.getTerminalPoint(false));
+				}
+
+				if (geo.points != null)
+				{
+					pts = pts.concat(geo.points);
+				}
+
+				for (var j = 0; j < pts.length; j++)
+				{
+					if (pts[j] != null)
+					{
+						if (rect == null)
+						{
+							rect = new mxRectangle(pts[j].x, pts[j].y, 0, 0);
+						}
+						else
+						{
+							rect.add(new mxRectangle(pts[j].x, pts[j].y, 0, 0));
+						}
+					}
+				}
+			}
+		}
+
+		if (rect != null)
+		{
+			if (result == null)
+			{
+				result = mxRectangle.fromRectangle(rect);
+			}
+			else
+			{
+				result.add(rect);
+			}
+		}
+	}
+
+	return result;
+};
+
+/**
+ * Returns the bounding box of a transparentBounds cell — the union of its
+ * children expanded by the group's padding and (for swimlanes) the title-
+ * bar start size — in the cell's own local coordinate space (child
+ * geometries are read directly without the cell's geo.x/y offset). Returns
+ * null when the group has no children with geometry.
+ */
+Graph.prototype.getTransparentBounds = function(cell)
+{
+	var bounds = this.getTransparentChildBounds(cell);
+
+	if (bounds == null)
+	{
+		return null;
+	}
+
+	var pad = this.getTransparentBoundsPadding(cell);
+	var start = this.isSwimlane(cell) ?
+		this.getActualStartSize(cell) : new mxRectangle();
+
+	return new mxRectangle(
+		bounds.x - pad.w - start.x,
+		bounds.y - pad.n - start.y,
+		bounds.width + pad.w + pad.e + start.x + start.width,
+		bounds.height + pad.n + pad.s + start.y + start.height);
+};
+
+/**
+ * Overrides the group-bounds computation so transparentBounds children
+ * contribute their actual visible bounds (derived from their own children)
+ * rather than their stored geometry. Without this, grouping two
+ * transparentBounds cells whose stored geometry doesn't track their visible
+ * content would size the outer group to the union of the stored boxes
+ * (typically just one of the children's visible regions) instead of the
+ * true bounding box of all rendered content.
+ */
+Graph.prototype.getBoundsForGroup = function(group, children, border)
+{
+	var result = null;
+
+	if (children != null)
+	{
+		for (var i = 0; i < children.length; i++)
+		{
+			if (!this.model.isVertex(children[i]))
+			{
+				continue;
+			}
+
+			var geo = this.getCellGeometry(children[i]);
+
+			if (geo == null || geo.relative)
+			{
+				continue;
+			}
+
+			var rect = null;
+
+			if (this.isTransparentBounds(children[i]))
+			{
+				var local = this.getTransparentBounds(children[i]);
+
+				if (local != null)
+				{
+					rect = new mxRectangle(geo.x + local.x, geo.y + local.y,
+						local.width, local.height);
+				}
+			}
+			else
+			{
+				rect = new mxRectangle(geo.x, geo.y, geo.width, geo.height);
+			}
+
+			if (rect != null)
+			{
+				if (result == null)
+				{
+					result = rect;
+				}
+				else
+				{
+					result.add(rect);
+				}
+			}
+		}
+	}
+
+	if (result != null)
+	{
+		if (this.isSwimlane(group))
+		{
+			var size = this.getStartSize(group);
+
+			result.x -= size.width;
+			result.y -= size.height;
+			result.width += size.width;
+			result.height += size.height;
+		}
+
+		if (border != null)
+		{
+			result.x -= border;
+			result.y -= border;
+			result.width += 2 * border;
+			result.height += 2 * border;
+		}
+	}
+
+	return result;
+};
+
+/**
+ * Skips transparentBounds groups when recomputing group bounds. Their visible
+ * box is already derived from their children at render time and their stored
+ * geometry must stay pinned at (0,0,0,0). The base implementation writes a
+ * non-zero geometry onto the group and shifts its children to match — double-
+ * counting the bounds offset so the group no longer hugs its content, and
+ * persisting the corrupted geometry to file. Reached from Edit > Autosize, the
+ * Arrange > Layout menu actions, and the tree/flow childLayout resizeParent
+ * path. Non-transparentBounds cells fall through to the base unchanged.
+ */
+Graph.prototype.updateGroupBounds = function(cells, border, moveGroup, topBorder, rightBorder, bottomBorder, leftBorder)
+{
+	if (cells != null)
+	{
+		var filtered = [];
+
+		for (var i = 0; i < cells.length; i++)
+		{
+			if (!this.isTransparentBounds(cells[i]))
+			{
+				filtered.push(cells[i]);
+			}
+		}
+
+		if (filtered.length < cells.length)
+		{
+			mxGraph.prototype.updateGroupBounds.call(this, filtered, border, moveGroup,
+				topBorder, rightBorder, bottomBorder, leftBorder);
+
+			// Preserve the base contract of returning the originally passed cells.
+			return cells;
+		}
+	}
+
+	return mxGraph.prototype.updateGroupBounds.apply(this, arguments);
+};
+
+/**
+ * Substitutes the visible (child-derived) bounds for transparentBounds cells,
+ * whose stored geometry is pinned at (0,0,0,0). The base implementation reads
+ * each cell's stored geometry directly with no child recursion, so without this
+ * a transparentBounds group contributes a zero-size box at its parent origin —
+ * breaking every positioning path that derives an offset from this method
+ * (paste-at-point, crop on import, getCenterInsertPoint, initial page translate).
+ *
+ * transparentBounds cells are pulled out and replaced by their getTransparentBounds
+ * box (translated by the cell's geo.x/y into parent coords, which is a no-op while
+ * the geometry is pinned but stays correct if that ever changes); everything else
+ * falls through to the base. The original cells array is passed as `ancestors` so
+ * the base still resolves parent offsets for edge/relative children whose parent
+ * is one of the extracted transparentBounds cells.
+ */
+Graph.prototype.getBoundingBoxFromGeometry = function(cells, includeEdges, ancestors, includeStrokeWidth)
+{
+	var result = null;
+	var rest = null;
+
+	if (cells != null)
+	{
+		rest = [];
+
+		for (var i = 0; i < cells.length; i++)
+		{
+			var geo = (this.model.isVertex(cells[i])) ?
+				this.getCellGeometry(cells[i]) : null;
+
+			if (geo != null && !geo.relative && this.isTransparentBounds(cells[i]))
+			{
+				var local = this.getTransparentBounds(cells[i]);
+
+				if (local != null)
+				{
+					var bbox = new mxRectangle(geo.x + local.x, geo.y + local.y,
+						local.width, local.height);
+
+					if (result == null)
+					{
+						result = bbox;
+					}
+					else
+					{
+						result.add(bbox);
+					}
+				}
+			}
+			else
+			{
+				rest.push(cells[i]);
+			}
+		}
+	}
+
+	var base = mxGraph.prototype.getBoundingBoxFromGeometry.call(this, rest,
+		includeEdges, (ancestors != null) ? ancestors : cells, includeStrokeWidth);
+
+	if (base != null)
+	{
+		if (result == null)
+		{
+			result = base;
+		}
+		else
+		{
+			result.add(base);
+		}
+	}
+
+	return result;
+};
+
+/**
  * Adds a connectable style.
  */
 Graph.prototype.isCellConnectable = function(cell)
@@ -7990,7 +8988,13 @@ Graph.prototype.isCellFoldable = function(cell)
 {
 	var style = this.getCurrentCellStyle(cell);
 	
-	return this.foldingEnabled && mxUtils.getValue(style,
+	// transparentBounds groups have geometry pinned at (0,0,0,0) with their box
+	// derived from children. Collapsing swaps geometry with the preferred-size
+	// alternateBounds (mxGraph.swapBounds), writing a non-zero geometry onto the
+	// group, corrupting the pin and rendering an empty box. They are not
+	// foldable until proper collapse support exists for derived bounds.
+	return this.foldingEnabled && !this.isTransparentBounds(cell) &&
+		mxUtils.getValue(style,
 		mxConstants.STYLE_RESIZABLE, '1') != '0' &&
 		(style['treeFolding'] == '1' ||
 		(!this.isCellLocked(cell) &&
@@ -8161,6 +9165,31 @@ Graph.prototype.fitWindow = function(bounds, border, maxScale, zoomOutOnly, cent
 			}
 		}
 	}
+};
+
+/**
+ * Function: getCurrentViewBox
+ *
+ * Returns the visible canvas window in graph coordinates plus the current
+ * scale as {x, y, width, height, scale}. Used to snapshot a page's initial
+ * view (see PageSetupDialog) and restored via EditorUi.fitInitialView. The
+ * scale is kept so the authored zoom can be reproduced independently of the
+ * window size at restore time.
+ */
+Graph.prototype.getCurrentViewBox = function()
+{
+	var view = this.view;
+	var container = this.container;
+	var scale = view.scale;
+	var t = view.translate;
+
+	return {
+		x: Math.round(container.scrollLeft / scale - t.x),
+		y: Math.round(container.scrollTop / scale - t.y),
+		width: Math.round(container.clientWidth / scale),
+		height: Math.round(container.clientHeight / scale),
+		scale: Math.round(scale * 1e4) / 1e4
+	};
 };
 
 /**
@@ -10639,6 +11668,38 @@ TableLayout.prototype.execute = function(parent)
 	{
 		mxGraphViewUpdateCellState.apply(this, arguments);
 
+		// Derives the visible bounds of a transparentBounds cell from
+		// getTransparentBounds (children union expanded by padding and, for
+		// swimlanes, the title-bar start size — encoded so it lands on the
+		// correct edge: x for left, y for top, width for right, height for
+		// bottom). The stored geometry stays at (0,0,0,0), so state.origin
+		// still points at the group's parent origin and is left untouched
+		// (children compute their state.x from it).
+		if (this.graph.model.isVertex(state.cell) &&
+			this.graph.isTransparentBounds(state.cell))
+		{
+			var bounds = this.graph.getTransparentBounds(state.cell);
+
+			if (bounds != null)
+			{
+				state.x = this.scale * (this.translate.x + state.origin.x +
+					bounds.x);
+				state.y = this.scale * (this.translate.y + state.origin.y +
+					bounds.y);
+				state.width = this.scale * bounds.width;
+				state.height = this.scale * bounds.height;
+				state.unscaledWidth = bounds.width;
+				state.unscaledHeight = bounds.height;
+			}
+			else
+			{
+				state.width = 0;
+				state.height = 0;
+				state.unscaledWidth = 0;
+				state.unscaledHeight = 0;
+			}
+		}
+
 		// Updates jumps on invalid edge before repaint
 		if (this.graph.model.isEdge(state.cell) &&
 			state.style[mxConstants.STYLE_CURVED] != 1)
@@ -10646,7 +11707,39 @@ TableLayout.prototype.execute = function(parent)
 			this.updateLineJumps(state);
 		}
 	};
-	
+
+	/**
+	 * mxMorphing animates each cell from its pre-update visual position to its
+	 * post-update model position by computing delta = origin - state.x where
+	 * `origin` comes from getOriginForCell (geometry-only) and `state.x` is
+	 * the rendered position. For a transparentBounds cell, the updateCellState
+	 * override above adds the child-derived `bounds.x` to state.x so the
+	 * visible box hugs the children — but origin doesn't include that offset,
+	 * so the morph reads a constant non-zero delta even when nothing changed
+	 * and animates the group outward; the preview offset isn't fully unwound
+	 * when the animation ends, leaving the group visually displaced until the
+	 * next re-validate (e.g. window resize).
+	 *
+	 * Forcing delta = 0 for transparentBounds cells fixes this without side
+	 * effects: the group's stored geometry is pinned (drags translate the
+	 * children, not the group itself), so its model-position never actually
+	 * moves and there is nothing to animate. Children of the group still get
+	 * their own delta computed normally — if a layout moves a child, that
+	 * child still animates from pre to post position.
+	 */
+	var mxMorphingGetDelta = mxMorphing.prototype.getDelta;
+	mxMorphing.prototype.getDelta = function(state)
+	{
+		if (state != null && state.cell != null &&
+			this.graph.isTransparentBounds != null &&
+			this.graph.isTransparentBounds(state.cell))
+		{
+			return new mxPoint(0, 0);
+		}
+
+		return mxMorphingGetDelta.apply(this, arguments);
+	};
+
 	/**
 	 * Updates the jumps between given state and processed edges.
 	 */
@@ -12521,7 +13614,7 @@ if (typeof mxVertexHandler !== 'undefined')
 			var style = this.getCurrentCellStyle(cell);
 			var tables = true;
 			var rows = true;
-			
+
 			for (var i = 0; i < cells.length && rows; i++)
 			{
 				tables = tables && this.isTable(cells[i]);
@@ -12544,8 +13637,87 @@ if (typeof mxVertexHandler !== 'undefined')
 		{
 			var group = mxGraph.prototype.createGroupCell.apply(this, arguments);
 			group.setStyle('group');
-			
+
 			return group;
+		};
+
+		/**
+		 * Dragging a transparentBounds translates its children instead of moving
+		 * the group itself. The group's stored geometry stays pinned at (0,0,0,0)
+		 * and its visible bounds are derived from the new child positions.
+		 */
+		var graphTranslateCell = Graph.prototype.translateCell;
+		Graph.prototype.translateCell = function(cell, dx, dy)
+		{
+			if (this.isTransparentBounds(cell))
+			{
+				var count = this.model.getChildCount(cell);
+
+				for (var i = 0; i < count; i++)
+				{
+					this.translateCell(this.model.getChildAt(cell, i), dx, dy);
+				}
+			}
+			else
+			{
+				graphTranslateCell.apply(this, arguments);
+			}
+		};
+
+		/**
+		 * Creates a transparentBounds with stored geometry pinned at (0,0,0,0) so
+		 * its bounds derive from its children. The standard groupCells path resizes
+		 * the group to the children bounding box and translates children to be
+		 * relative to that origin; both steps are skipped here.
+		 */
+		var graphGroupCells = Graph.prototype.groupCells;
+		Graph.prototype.groupCells = function(group, border, cells)
+		{
+			if (group != null && this.isTransparentBounds(group))
+			{
+				if (cells == null)
+				{
+					cells = mxUtils.sortCells(this.getSelectionCells(), true);
+				}
+
+				cells = this.getCellsForGroup(cells);
+
+				if (cells.length > 0)
+				{
+					var parent = this.model.getParent(group);
+
+					if (parent == null)
+					{
+						parent = this.model.getParent(cells[0]);
+					}
+
+					this.model.beginUpdate();
+					try
+					{
+						this.model.setGeometry(group,
+							new mxGeometry(0, 0, 0, 0));
+
+						var index = this.model.getChildCount(parent);
+						this.cellsAdded([group], parent, index, null, null,
+							false, false, false);
+
+						index = this.model.getChildCount(group);
+						this.cellsAdded(cells, group, index, null, null,
+							false, false, false);
+
+						this.fireEvent(new mxEventObject(mxEvent.GROUP_CELLS,
+							'group', group, 'border', border, 'cells', cells));
+					}
+					finally
+					{
+						this.model.endUpdate();
+					}
+				}
+
+				return group;
+			}
+
+			return graphGroupCells.apply(this, arguments);
 		};
 		
 		/**
@@ -12907,6 +14079,77 @@ if (typeof mxVertexHandler !== 'undefined')
 		};
 		
 		/**
+		 * Rotates the given fully unconnected edges by 90 degrees around their
+		 * center. Edges with at least one connected terminal are ignored as their
+		 * endpoints are fixed to the connected cell (see issue #5076).
+		 */
+		Graph.prototype.rotateEdges = function(cells, backwards)
+		{
+			var model = this.getModel();
+			var select = [];
+
+			model.beginUpdate();
+			try
+			{
+				for (var i = 0; i < cells.length; i++)
+				{
+					var cell = cells[i];
+
+					if (model.isEdge(cell) && !this.isCellLocked(cell) &&
+						model.getTerminal(cell, true) == null &&
+						model.getTerminal(cell, false) == null)
+					{
+						var geo = model.getGeometry(cell);
+
+						if (geo != null && geo.getTerminalPoint(true) != null &&
+							geo.getTerminalPoint(false) != null)
+						{
+							geo = geo.clone();
+							var pts = [geo.getTerminalPoint(true), geo.getTerminalPoint(false)];
+
+							if (geo.points != null)
+							{
+								pts = pts.concat(geo.points);
+							}
+
+							var minX = pts[0].x, minY = pts[0].y, maxX = pts[0].x, maxY = pts[0].y;
+
+							for (var j = 1; j < pts.length; j++)
+							{
+								minX = Math.min(minX, pts[j].x);
+								minY = Math.min(minY, pts[j].y);
+								maxX = Math.max(maxX, pts[j].x);
+								maxY = Math.max(maxY, pts[j].y);
+							}
+
+							var cx = (minX + maxX) / 2;
+							var cy = (minY + maxY) / 2;
+
+							for (var j = 0; j < pts.length; j++)
+							{
+								var dx = pts[j].x - cx;
+								var dy = pts[j].y - cy;
+
+								// Rotates clockwise, or counter-clockwise if backwards
+								pts[j].x = (backwards) ? cx + dy : cx - dy;
+								pts[j].y = (backwards) ? cy - dx : cy + dx;
+							}
+
+							model.setGeometry(cell, geo);
+							select.push(cell);
+						}
+					}
+				}
+			}
+			finally
+			{
+				model.endUpdate();
+			}
+
+			return select;
+		};
+		
+		/**
 		 * Returns true if the given stencil contains any placeholder text.
 		 */
 		Graph.prototype.stencilHasPlaceholders = function(stencil)
@@ -13137,21 +14380,23 @@ if (typeof mxVertexHandler !== 'undefined')
 
 		/**
 		 * Removes transparent empty groups if all children are removed.
+		 * Also collapses a transparentBounds parent whose remaining child
+		 * is a single transparentBounds wrapper.
 		 */
 		Graph.prototype.cellsRemoved = function(cells)
 		{
 			if (cells != null)
 			{
 				var dict = new mxDictionary();
-				
+
 				for (var i = 0; i < cells.length; i++)
 				{
 					dict.put(cells[i], true);
 				}
-				
+
 				// LATER: Recurse up the cell hierarchy
 				var parents = [];
-				
+
 				for (var i = 0; i < cells.length; i++)
 				{
 					var parent = this.model.getParent(cells[i]);
@@ -13162,18 +14407,19 @@ if (typeof mxVertexHandler !== 'undefined')
 						parents.push(parent);
 					}
 				}
-				
+
 				for (var i = 0; i < parents.length; i++)
 				{
 					var state = this.view.getState(parents[i]);
-					
+
 					if (state != null && (this.model.isEdge(state.cell) ||
 						this.model.isVertex(state.cell)) &&
 						this.isCellDeletable(state.cell) &&
-						this.isTransparentState(state))
+						(this.isTransparentState(state) ||
+							this.isTransparentBounds(state.cell)))
 					{
 						var allChildren = true;
-						
+
 						for (var j = 0; j < this.model.getChildCount(state.cell) && allChildren; j++)
 						{
 							if (!dict.get(this.model.getChildAt(state.cell, j)))
@@ -13181,15 +14427,83 @@ if (typeof mxVertexHandler !== 'undefined')
 								allChildren = false;
 							}
 						}
-						
+
 						if (allChildren)
 						{
 							cells.push(state.cell);
 						}
 					}
 				}
+
+				// Collapses redundant nested transparentBounds: if removal
+				// leaves a transparentBounds parent with a single remaining
+				// child that is itself transparentBounds, the inner wrapper
+				// adds no visible structure — lift its children up and drop
+				// the wrapper. Loops per parent so a chain of single-tb-child
+				// wrappers collapses in one pass.
+				//
+				// Uses a fresh removedDict instead of dict because dict is
+				// overloaded to also mark parent cells (for dedup in the
+				// parent-collection loop above), and those parents are NOT
+				// being removed unless the all-children loop added them.
+				var removedDict = new mxDictionary();
+
+				for (var i = 0; i < cells.length; i++)
+				{
+					removedDict.put(cells[i], true);
+				}
+
+				for (var i = 0; i < parents.length; i++)
+				{
+					var parent = parents[i];
+
+					while (!removedDict.get(parent) && this.isTransparentBounds(parent))
+					{
+						var remaining = null;
+						var multiple = false;
+						var count = this.model.getChildCount(parent);
+
+						for (var j = 0; j < count; j++)
+						{
+							var child = this.model.getChildAt(parent, j);
+
+							if (!removedDict.get(child))
+							{
+								if (remaining != null)
+								{
+									multiple = true;
+									break;
+								}
+
+								remaining = child;
+							}
+						}
+
+						if (multiple || remaining == null ||
+							!this.isTransparentBounds(remaining) ||
+							!this.isCellDeletable(remaining))
+						{
+							break;
+						}
+
+						var grandchildren = this.model.getChildren(remaining);
+
+						if (grandchildren != null && grandchildren.length > 0)
+						{
+							// absolute=true so cellsAdded translates each
+							// grandchild's local geometry by (remainingOrigin -
+							// parentOrigin), keeping them at the same visual
+							// position after the reparent.
+							this.cellsAdded(grandchildren.slice(), parent,
+								this.model.getChildCount(parent), null, null, true);
+						}
+
+						removedDict.put(remaining, true);
+						cells.push(remaining);
+					}
+				}
 			}
-			
+
 			mxGraph.prototype.cellsRemoved.apply(this, arguments);
 		};
 		
@@ -14109,14 +15423,261 @@ if (typeof mxVertexHandler !== 'undefined')
 		 * @param cell
 		 * @returns {Boolean}
 		 */
+		/**
+		 * Includes transparentBounds cells (which are not resizable in the
+		 * standard sense, so isCellResizable returns false to suppress sizers)
+		 * in the rotatable set so that the turn / rotateShapeOnly action can
+		 * advance the direction style on a transparentBounds swimlane.
+		 */
+		var graphGetResizableCells = Graph.prototype.getResizableCells;
+		Graph.prototype.getResizableCells = function(cells)
+		{
+			var result = graphGetResizableCells.apply(this, arguments);
+
+			if (cells != null)
+			{
+				for (var i = 0; i < cells.length; i++)
+				{
+					if (this.isTransparentBounds(cells[i]) &&
+						mxUtils.indexOf(result, cells[i]) < 0)
+					{
+						result.push(cells[i]);
+					}
+				}
+			}
+
+			return result;
+		};
+
 		Graph.prototype.isCellResizable = function(cell)
 		{
+			if (this.isTransparentBounds(cell))
+			{
+				return false;
+			}
+
 			var result = mxGraph.prototype.isCellResizable.apply(this, arguments);
 			var style = this.getCurrentCellStyle(cell);
-				
+
 			return !this.isTableCell(cell) && !this.isTableRow(cell) && (result ||
 				(mxUtils.getValue(style, mxConstants.STYLE_RESIZABLE, '1') != '0' &&
 				style[mxConstants.STYLE_WHITE_SPACE] == 'wrap'));
+		};
+
+		/**
+		 * Aligns a selection that includes one or more transparentBounds groups.
+		 * The base reads each cell's stored geometry and writes it via resizeCell,
+		 * but a transparentBounds group's geometry is pinned at (0,0,0,0) and its
+		 * visible box is derived from its children — so the base aligns to (and
+		 * "moves") a zero-size box at the group's parent origin, leaving the group
+		 * visually unmoved while corrupting the pinned geometry. With no
+		 * transparentBounds cell in the selection this delegates verbatim to the
+		 * base. Otherwise the alignment coordinate is taken from each cell's visible
+		 * bounds, transparentBounds groups are moved with translateCell (which
+		 * translates their children) and every other cell is moved exactly as the
+		 * base does (identical resulting geometry).
+		 */
+		Graph.prototype.alignCells = function(align, cells, param)
+		{
+			if (cells == null)
+			{
+				cells = this.getMovableCells(this.getSelectionCells());
+			}
+
+			var hasTransparent = false;
+
+			if (cells != null)
+			{
+				for (var i = 0; i < cells.length; i++)
+				{
+					if (this.isTransparentBounds(cells[i]))
+					{
+						hasTransparent = true;
+						break;
+					}
+				}
+			}
+
+			if (!hasTransparent)
+			{
+				return mxGraph.prototype.alignCells.apply(this, arguments);
+			}
+
+			var graph = this;
+
+			// Visible model-space bounds of a cell (excluding the view translate):
+			// the child-derived box for a transparentBounds group, the stored
+			// geometry otherwise. Returns null for edges and relative cells, which
+			// the base alignment also skips.
+			var boundsOf = function(cell)
+			{
+				if (graph.model.isEdge(cell))
+				{
+					return null;
+				}
+
+				var geo = graph.getCellGeometry(cell);
+
+				if (geo == null || geo.relative)
+				{
+					return null;
+				}
+
+				var origin = graph.getOriginForCell(cell);
+
+				if (graph.isTransparentBounds(cell))
+				{
+					var local = graph.getTransparentBounds(cell);
+
+					if (local == null)
+					{
+						return null;
+					}
+
+					return new mxRectangle(origin.x + geo.x + local.x,
+						origin.y + geo.y + local.y, local.width, local.height);
+				}
+
+				return new mxRectangle(origin.x + geo.x, origin.y + geo.y,
+					geo.width, geo.height);
+			};
+
+			if (cells != null && cells.length > 1)
+			{
+				if (param == null)
+				{
+					for (var i = 0; i < cells.length; i++)
+					{
+						var b = boundsOf(cells[i]);
+
+						if (b == null)
+						{
+							continue;
+						}
+
+						if (param == null)
+						{
+							if (align == mxConstants.ALIGN_CENTER)
+							{
+								param = b.x + b.width / 2;
+								break;
+							}
+							else if (align == mxConstants.ALIGN_RIGHT)
+							{
+								param = b.x + b.width;
+							}
+							else if (align == mxConstants.ALIGN_TOP)
+							{
+								param = b.y;
+							}
+							else if (align == mxConstants.ALIGN_MIDDLE)
+							{
+								param = b.y + b.height / 2;
+								break;
+							}
+							else if (align == mxConstants.ALIGN_BOTTOM)
+							{
+								param = b.y + b.height;
+							}
+							else
+							{
+								param = b.x;
+							}
+						}
+						else
+						{
+							if (align == mxConstants.ALIGN_RIGHT)
+							{
+								param = Math.max(param, b.x + b.width);
+							}
+							else if (align == mxConstants.ALIGN_TOP)
+							{
+								param = Math.min(param, b.y);
+							}
+							else if (align == mxConstants.ALIGN_BOTTOM)
+							{
+								param = Math.max(param, b.y + b.height);
+							}
+							else
+							{
+								param = Math.min(param, b.x);
+							}
+						}
+					}
+				}
+
+				if (param != null)
+				{
+					// Processes from parent to child
+					cells = mxUtils.sortCells(cells);
+
+					this.model.beginUpdate();
+					try
+					{
+						for (var i = 0; i < cells.length; i++)
+						{
+							var b = boundsOf(cells[i]);
+
+							if (b == null)
+							{
+								continue;
+							}
+
+							var dx = 0;
+							var dy = 0;
+
+							if (align == mxConstants.ALIGN_CENTER)
+							{
+								dx = param - (b.x + b.width / 2);
+							}
+							else if (align == mxConstants.ALIGN_RIGHT)
+							{
+								dx = param - (b.x + b.width);
+							}
+							else if (align == mxConstants.ALIGN_TOP)
+							{
+								dy = param - b.y;
+							}
+							else if (align == mxConstants.ALIGN_MIDDLE)
+							{
+								dy = param - (b.y + b.height / 2);
+							}
+							else if (align == mxConstants.ALIGN_BOTTOM)
+							{
+								dy = param - (b.y + b.height);
+							}
+							else
+							{
+								dx = param - b.x;
+							}
+
+							if (dx != 0 || dy != 0)
+							{
+								if (this.isTransparentBounds(cells[i]))
+								{
+									this.translateCell(cells[i], dx, dy);
+								}
+								else
+								{
+									var geo = this.getCellGeometry(cells[i]).clone();
+									geo.x += dx;
+									geo.y += dy;
+									this.resizeCell(cells[i], geo);
+								}
+							}
+						}
+
+						this.fireEvent(new mxEventObject(mxEvent.ALIGN_CELLS,
+							'align', align, 'cells', cells));
+					}
+					finally
+					{
+						this.model.endUpdate();
+					}
+				}
+			}
+
+			return cells;
 		};
 		
 		/**
@@ -14199,18 +15760,42 @@ if (typeof mxVertexHandler !== 'undefined')
 							
 							if (geo != null && pstate != null)
 							{
-								geo = geo.clone();
-								
-								if (horizontal)
+								if (this.isTransparentBounds(vertices[i].cell))
 								{
-									geo.x = Math.round(t0 - (spacing? 0 : geo.width / 2)) - pstate.origin.x;
+									// Geometry is pinned at (0,0,0,0) and ignored by
+									// rendering, so writing it leaves the group in place.
+									// Move the group (its children) by the delta from its
+									// current visible position to the distributed target.
+									var cur = (horizontal) ?
+										((spacing) ? vertices[i].x / s - t.x :
+											vertices[i].getCenterX() / s - t.x) :
+										((spacing) ? vertices[i].y / s - t.y :
+											vertices[i].getCenterY() / s - t.y);
+
+									if (horizontal)
+									{
+										this.translateCell(vertices[i].cell, t0 - cur, 0);
+									}
+									else
+									{
+										this.translateCell(vertices[i].cell, 0, t0 - cur);
+									}
 								}
 								else
 								{
-									geo.y = Math.round(t0 - (spacing? 0 : geo.height / 2)) - pstate.origin.y;
+									geo = geo.clone();
+
+									if (horizontal)
+									{
+										geo.x = Math.round(t0 - (spacing? 0 : geo.width / 2)) - pstate.origin.x;
+									}
+									else
+									{
+										geo.y = Math.round(t0 - (spacing? 0 : geo.height / 2)) - pstate.origin.y;
+									}
+
+									this.getModel().setGeometry(vertices[i].cell, geo);
 								}
-								
-								this.getModel().setGeometry(vertices[i].cell, geo);
 							}
 
 							if (spacing)
@@ -14245,10 +15830,10 @@ if (typeof mxVertexHandler !== 'undefined')
 		 * @param {number} dx X-coordinate of the translation.
 		 * @param {number} dy Y-coordinate of the translation.
 		 */
-		Graph.prototype.createSvgImageExport = function(includeCellId)
+		Graph.prototype.createSvgImageExport = function(includeCellId, addSvgData)
 		{
 			var exp = new mxImageExport();
-			
+
 			// Adds cell IDs and cell heirarchy
 			exp.addCellData = function(cell, group, includeValue)
 			{
@@ -14277,9 +15862,22 @@ if (typeof mxVertexHandler !== 'undefined')
 					}
 				}
 
+				// Mirrors the cell value's XML attributes as data-meta-{attr} on the
+				// wrapper group. The data-meta- prefix is reserved for user-defined
+				// metadata so it cannot collide with internal attributes such as
+				// data-cell-id even when a property is literally named "cell-id".
+				if (addSvgData && mxUtils.isNode(cell.value))
+				{
+					for (var i = 0; i < cell.value.attributes.length; i++)
+					{
+						var attrib = cell.value.attributes[i];
+						group.setAttribute('data-meta-' + attrib.name, attrib.value);
+					}
+				}
+
 				return group;
 			};
-			
+
 			// Maps cell hierarchy to SVG group structure
 			var visitStatesRecursive = exp.visitStatesRecursive;
 			exp.visitStatesRecursive = function(state, canvas, visitor)
@@ -16764,6 +18362,87 @@ if (typeof mxVertexHandler !== 'undefined')
 		};
 
 		/**
+		 * Selection propagation rules for groups and swimlanes:
+		 *   - selectParentFirst=1 on the parent: walk up unless the parent is
+		 *     already selected, then stop on the child. Produces a parent ↔
+		 *     child click cycle starting at parent. Works on any vertex parent
+		 *     (groups, swimlanes, transparentBounds).
+		 *   - transparentBounds=1 (without selectParentFirst): stop at the
+		 *     group boundary so children are selectable directly, like
+		 *     children of a swimlane.
+		 *   - Otherwise: fall through to base propagation (groups propagate
+		 *     up to parent first; swimlanes stop on the clicked child).
+		 */
+		var mxGraphHandlerIsPropagateSelectionCell = mxGraphHandler.prototype.isPropagateSelectionCell;
+		mxGraphHandler.prototype.isPropagateSelectionCell = function(cell, immediate, me)
+		{
+			var parent = this.graph.model.getParent(cell);
+
+			if (parent != null)
+			{
+				if (this.graph.isSelectParentFirst(parent))
+				{
+					// Walk up to the parent unless it (or a sibling of the
+					// clicked child) is already selected — keeping a sibling
+					// selection live in the same group means the user wants
+					// to switch between children rather than escalate.
+					return !this.graph.isCellSelected(parent) &&
+						!this.graph.isSiblingSelected(cell);
+				}
+
+				if (this.graph.isTransparentBounds(parent))
+				{
+					return false;
+				}
+			}
+
+			return mxGraphHandlerIsPropagateSelectionCell.apply(this, arguments);
+		};
+
+		/**
+		 * Includes transparentBounds ancestors of selected cells in the handler
+		 * list so that the group's own vertex handler is created (drawing the
+		 * dashed bounds and the move handle) even when only descendants are
+		 * formally selected. These ancestor cells do not enter the selection,
+		 * so delete/copy/format-panel still operate on the user's actual choice.
+		 */
+		var mxSelectionCellsHandlerGetHandledSelectionCells = mxSelectionCellsHandler.prototype.getHandledSelectionCells;
+		mxSelectionCellsHandler.prototype.getHandledSelectionCells = function()
+		{
+			var cells = mxSelectionCellsHandlerGetHandledSelectionCells.apply(this, arguments);
+			var graph = this.graph;
+			var dict = new mxDictionary();
+			var result = [];
+
+			for (var i = 0; i < cells.length; i++)
+			{
+				if (dict.get(cells[i]) == null)
+				{
+					dict.put(cells[i], true);
+					result.push(cells[i]);
+				}
+			}
+
+			for (var i = 0; i < cells.length; i++)
+			{
+				var parent = graph.model.getParent(cells[i]);
+
+				while (parent != null && graph.isTransparentBounds(parent))
+				{
+					if (dict.get(parent) == null)
+					{
+						dict.put(parent, true);
+						result.push(parent);
+					}
+
+					parent = graph.model.getParent(parent);
+				}
+			}
+
+			return result;
+		};
+
+		/**
 		 * Hints on handlers
 		 */
 		function createHint()
@@ -16954,11 +18633,77 @@ if (typeof mxVertexHandler !== 'undefined')
 		mxVertexHandler.prototype.createParentHighlightShape = function(bounds)
 		{
 			var shape = vertexHandlerCreateParentHighlightShape.apply(this, arguments);
-			
+
 			shape.stroke = '#C0C0C0';
 			shape.strokewidth = 1;
-			
+
+			// Dashed outline for transparentBounds ancestors so the group bounds
+			// are visually distinguishable from the standard parent highlight.
+			var parent = this.graph.model.getParent(this.state.cell);
+
+			if (parent != null && this.graph.isTransparentBounds(parent))
+			{
+				shape.isDashed = true;
+			}
+
 			return shape;
+		};
+
+		/**
+		 * The transparentBounds's own selection border is drawn dashed so the
+		 * derived-bounds outline keeps the same visual language whether the
+		 * group or a descendant is selected.
+		 */
+		var vertexHandlerIsSelectionDashed = mxVertexHandler.prototype.isSelectionDashed;
+		mxVertexHandler.prototype.isSelectionDashed = function()
+		{
+			if (this.graph.isTransparentBounds(this.state.cell))
+			{
+				return true;
+			}
+
+			return vertexHandlerIsSelectionDashed.apply(this, arguments);
+		};
+
+		/**
+		 * A transparentBounds vertex handler can be present for two reasons:
+		 * the user selected the group itself (draw the standard blue
+		 * selection border) or only a descendant is selected and the group
+		 * is shown via the ancestor-injection in getHandledSelectionCells
+		 * (draw a gray border that matches the parent-highlight color).
+		 */
+		var vertexHandlerGetSelectionColor = mxVertexHandler.prototype.getSelectionColor;
+		mxVertexHandler.prototype.getSelectionColor = function()
+		{
+			if (this.graph.isTransparentBounds(this.state.cell) &&
+				!this.graph.isCellSelected(this.state.cell))
+			{
+				return '#C0C0C0';
+			}
+
+			return vertexHandlerGetSelectionColor.apply(this, arguments);
+		};
+
+		/**
+		 * The selection-cells handler reuses an existing vertex handler when
+		 * the same cell stays in the handled set across a selection change,
+		 * which is exactly the transition between ancestor-only and directly
+		 * selected for a transparentBounds group. Reuse only calls redraw(),
+		 * not refresh(), so the selectionBorder stroke is never re-read.
+		 * Pull the current color through updateParentHighlight, which IS
+		 * called on every reused handler at the end of refresh.
+		 */
+		var vertexHandlerUpdateParentHighlight = mxVertexHandler.prototype.updateParentHighlight;
+		mxVertexHandler.prototype.updateParentHighlight = function()
+		{
+			vertexHandlerUpdateParentHighlight.apply(this, arguments);
+
+			if (this.selectionBorder != null &&
+				this.graph.isTransparentBounds(this.state.cell))
+			{
+				this.selectionBorder.stroke = this.getSelectionColor();
+				this.selectionBorder.redraw();
+			}
 		};
 		
 		/**
@@ -17014,7 +18759,8 @@ if (typeof mxVertexHandler !== 'undefined')
 			return vertexHandlerIsRotationHandleVisible.apply(this, arguments)  &&
 				!this.graph.isTableCell(this.state.cell) &&
 				!this.graph.isTableRow(this.state.cell) &&
-				!this.graph.isTable(this.state.cell);
+				!this.graph.isTable(this.state.cell) &&
+				!this.graph.isTransparentBounds(this.state.cell);
 		};
 
 		/**
@@ -17022,7 +18768,8 @@ if (typeof mxVertexHandler !== 'undefined')
 		 */
 		mxVertexHandler.prototype.isConnectHandleVisible = function()
 		{
-			return Editor.showConnectHandle && this.graph.isEnabled() &&
+			return this.graph.isConnectIconVisible(this.state.cell) &&
+				this.graph.isEnabled() &&
 				this.graph.isCellConnectable(this.state.cell) &&
 				!this.graph.isTableCell(this.state.cell) &&
 				!this.graph.isTableRow(this.state.cell) &&
@@ -17036,9 +18783,24 @@ if (typeof mxVertexHandler !== 'undefined')
 		mxVertexHandler.prototype.getConnectHandlePosition = function()
 		{
 			var padding = this.getHandlePadding();
+			var graph = this.graph;
+			var offset = graph.getNestedCornerIconOffset(this.state.cell,
+				this.bounds.x + this.bounds.width, this.bounds.y + this.bounds.height,
+				function(c)
+				{
+					// Mirrors mxVertexHandler.isConnectHandleVisible so a
+					// descendant only contributes if it would actually render
+					// the connect handle.
+					return graph.isConnectIconVisible(c) &&
+						graph.isEnabled() &&
+						graph.isCellConnectable(c) &&
+						!graph.isTableCell(c) &&
+						!graph.isTableRow(c) &&
+						!graph.isTable(c);
+				});
 
-			return new mxPoint(this.bounds.x + this.bounds.width - this.connectHandleVSpacing + padding.x / 2,
-				this.bounds.y + this.bounds.height - this.connectHandleVSpacing + padding.y / 2);
+			return new mxPoint(this.bounds.x + this.bounds.width - this.connectHandleVSpacing + padding.x / 2 + offset,
+				this.bounds.y + this.bounds.height - this.connectHandleVSpacing + padding.y / 2 + offset);
 		};
 
 		/**
@@ -17062,6 +18824,16 @@ if (typeof mxVertexHandler !== 'undefined')
 		var vertexHandlerIsParentHighlightVisible = mxVertexHandler.prototype.isParentHighlightVisible;
 		mxVertexHandler.prototype.isParentHighlightVisible = function()
 		{
+			var parent = this.graph.model.getParent(this.state.cell);
+
+			// transparentBounds ancestors get their own vertex handler via
+			// getHandledSelectionCells, which already draws the dashed bounds.
+			// Suppress the parent highlight here to avoid a duplicate outline.
+			if (parent != null && this.graph.isTransparentBounds(parent))
+			{
+				return false;
+			}
+
 			return vertexHandlerIsParentHighlightVisible.apply(this, arguments) &&
 				!this.graph.isTableCell(this.state.cell) &&
 				!this.graph.isTableRow(this.state.cell);
@@ -17074,6 +18846,7 @@ if (typeof mxVertexHandler !== 'undefined')
 		mxVertexHandler.prototype.isCustomHandleVisible = function(handle)
 		{
 			return handle.tableHandle || handle.lockHandle || handle.editIconHandle ||
+				handle.moveGroupHandle ||
 				(vertexHandlerIsCustomHandleVisible.apply(this, arguments) &&
 				(!this.graph.isTable(this.state.cell) ||
 				this.graph.isCellSelected(this.state.cell)));
@@ -17085,8 +18858,17 @@ if (typeof mxVertexHandler !== 'undefined')
 		mxVertexHandler.prototype.getSelectionBorderInset = function()
 		{
 			var result = 0;
-			
-			if (this.graph.isTableRow(this.state.cell))
+
+			// Negative inset = outward pad via .grow(-inset). The outermost
+			// transparentBounds in a nested chain has the most nested
+			// transparentBounds descendants in the handler set, so its
+			// border (and corner handles) sit furthest from the shared
+			// corner, wrapping the inner cells' borders.
+			if (this.graph.isTransparentBounds(this.state.cell))
+			{
+				result = -this.graph.getNestedTransparentBoundsCount(this.state.cell);
+			}
+			else if (this.graph.isTableRow(this.state.cell))
 			{
 				result = 1;
 			}
@@ -17429,11 +19211,19 @@ if (typeof mxVertexHandler !== 'undefined')
 						// Top-left corner. Mirrors the rotate handle: pads outward
 						// for small bounds via getHandlePadding so the icon stays
 						// clear of the resize sizers. Rotated around the cell center
-						// so the icon tracks the rotated corner.
+						// so the icon tracks the rotated corner. Nested cells
+						// sharing this corner stack diagonally up-and-left via
+						// getNestedCornerIconOffset.
 						var padding = self.getHandlePadding();
+						var offset = graph.getNestedCornerIconOffset(cell,
+							self.bounds.x, self.bounds.y, function(c)
+							{
+								return graph.isLockedGroupIconVisible(c) &&
+									graph.isCellMovable(c);
+							});
 						var pt = new mxPoint(
-							self.bounds.x - 12 - padding.x / 2,
-							self.bounds.y - 12 - padding.y / 2);
+							self.bounds.x - 12 - padding.x / 2 - offset,
+							self.bounds.y - 12 - padding.y / 2 - offset);
 						var deg = Number((self.currentAlpha != null) ? self.currentAlpha :
 							(self.state.style[mxConstants.STYLE_ROTATION] || '0'));
 						var alpha = mxUtils.toRadians(deg);
@@ -17471,7 +19261,8 @@ if (typeof mxVertexHandler !== 'undefined')
 				handles.push(handle);
 			}
 
-			// Adds edit-icon handle when editIcon=1 (pen icon in bottom-right).
+			// Adds edit-icon handle when editIcon=1 (pen icon at the top-left,
+			// to the right of the lock and/or move icon when present).
 			// Clicking it triggers editing on the cell.
 			if (this.graph.isEditIconVisible(this.state.cell))
 			{
@@ -17500,10 +19291,30 @@ if (typeof mxVertexHandler !== 'undefined')
 				{
 					if (this.shape != null)
 					{
+						// Top-left corner. Nested cells sharing this corner
+						// stack diagonally up-and-left via
+						// getNestedCornerIconOffset.
 						var padding = self.getHandlePadding();
+						var offset = graph.getNestedCornerIconOffset(cell,
+							self.bounds.x, self.bounds.y,
+							function(c)
+							{
+								return graph.isEditIconVisible(c);
+							});
 						var pt = new mxPoint(
-							self.bounds.x - 12 - padding.x / 2,
-							self.bounds.y + self.bounds.height + 12 + padding.y / 2);
+							self.bounds.x - 12 - padding.x / 2 - offset,
+							self.bounds.y - 12 - padding.y / 2 - offset);
+
+						// Shifts right along the top edge when the lock and/or
+						// move icon occupies the corner (lock above move), so
+						// the icons form an L: corner column plus this one.
+						if (graph.isCellMovable(cell) &&
+							(graph.isLockedGroupIconVisible(cell) ||
+							graph.isMoveIconVisible(cell)))
+						{
+							pt.x += 24;
+						}
+
 						var deg = Number((self.currentAlpha != null) ? self.currentAlpha :
 							(self.state.style[mxConstants.STYLE_ROTATION] || '0'));
 						var alpha = mxUtils.toRadians(deg);
@@ -17533,6 +19344,74 @@ if (typeof mxVertexHandler !== 'undefined')
 				handles.push(handle);
 			}
 
+			// Visual move-handle icon at the top-left of the cell's bounds.
+			// The icon's DOM listeners forward mousedown to graph.fireMouseEvent
+			// with the cell's state; the mxVertexHandler.mouseDown wrapper
+			// skips start() for moveGroupHandle hits, so mxGraphHandler picks
+			// up the drag with the cell as the target — identical behaviour
+			// (live preview, grid snap, dashed preview shape) to grabbing the
+			// cell's body or dashed border directly. When getMoveIconDragCells
+			// returns a custom drag set (eg. a tree cell's subtree), the
+			// wrapper starts mxGraphHandler with that set instead.
+			if (this.graph.isMoveIconVisible(this.state.cell) &&
+				this.graph.isCellMovable(this.state.cell))
+			{
+				if (handles == null)
+				{
+					handles = [];
+				}
+
+				var self = this;
+				var graph = this.graph;
+				var cell = this.state.cell;
+				var size = 16;
+
+				var shape = new mxImageShape(new mxRectangle(0, 0, size, size),
+					HoverIcons.prototype.moveHandle.src);
+				shape.preserveImageAspect = false;
+
+				var handle = new mxHandle(this.state, 'move', null, shape);
+				handle.moveGroupHandle = true;
+
+				// No-op drag callbacks: the actual move runs through
+				// mxGraphHandler, so this handle is a visual hit-target only.
+				handle.setPosition = function() {};
+				handle.positionChanged = function() {};
+				handle.execute = function() {};
+				handle.reset = function() {};
+
+				handle.redraw = function()
+				{
+					if (this.shape != null)
+					{
+						var padding = self.getHandlePadding();
+						var offset = graph.getNestedCornerIconOffset(cell,
+							self.bounds.x, self.bounds.y, function(c)
+							{
+								return graph.isMoveIconVisible(c) &&
+									graph.isCellMovable(c);
+							});
+						var x = self.bounds.x - 12 - padding.x / 2 - offset;
+						var y = self.bounds.y - 12 - padding.y / 2 - offset;
+
+						// Shifts below the lock icon when both are present so
+						// the top-left corner can host them stacked vertically.
+						if (graph.isLockedGroupIconVisible(cell))
+						{
+							y += 24;
+						}
+
+						this.shape.bounds.width = size;
+						this.shape.bounds.height = size;
+						this.shape.bounds.x = x - size / 2;
+						this.shape.bounds.y = y - size / 2;
+						this.shape.redraw();
+					}
+				};
+
+				handles.push(handle);
+			}
+
 			// Reserve gives point handles precedence over line handles
 			return (handles != null) ? handles.reverse() : null;
 		};
@@ -17541,6 +19420,81 @@ if (typeof mxVertexHandler !== 'undefined')
 		 * Hides additional handles
 		 */
 		var vertexHandlerSetHandlesVisible = mxVertexHandler.prototype.setHandlesVisible;
+
+		/**
+		 * Hides the dashed selection borders of every transparentBounds ancestor
+		 * for the duration of a child resize/rotate. mxGraphHandler already
+		 * toggles visibility via setHandlesVisibleForCells during a move drag;
+		 * the resize path goes through mxVertexHandler.start instead, so the
+		 * ancestor outlines need a separate hook here.
+		 *
+		 * Also restores this.parentState.x/y to the origin-only screen position
+		 * for a transparentBounds parent. The updateCellState override shifts
+		 * the group's state.x/y to its derived bounds for rendering, but
+		 * resizeVertex computes bounds.x = parentState.x + unscaledBounds.x *
+		 * scale assuming parentState.x equals scale*(translate + origin), so
+		 * the bounds offset would otherwise be applied twice.
+		 */
+		var vertexHandlerStart = mxVertexHandler.prototype.start;
+		mxVertexHandler.prototype.start = function(x, y, index)
+		{
+			vertexHandlerStart.apply(this, arguments);
+
+			var graph = this.graph;
+
+			if (this.parentState != null &&
+				graph.isTransparentBounds(this.parentState.cell))
+			{
+				var scale = graph.view.scale;
+				var tr = graph.view.translate;
+				var orig = this.parentState;
+				this.parentState = orig.clone();
+				this.parentState.x = scale * (tr.x + orig.origin.x);
+				this.parentState.y = scale * (tr.y + orig.origin.y);
+			}
+
+			var parent = graph.model.getParent(this.state.cell);
+
+			while (parent != null)
+			{
+				if (graph.isTransparentBounds(parent))
+				{
+					var h = graph.selectionCellsHandler.getHandler(parent);
+
+					if (h != null && h.selectionBorder != null)
+					{
+						h.selectionBorder.node.style.visibility = 'hidden';
+					}
+				}
+
+				parent = graph.model.getParent(parent);
+			}
+		};
+
+		var vertexHandlerReset = mxVertexHandler.prototype.reset;
+		mxVertexHandler.prototype.reset = function()
+		{
+			var graph = this.graph;
+			var parent = (this.state != null) ?
+				graph.model.getParent(this.state.cell) : null;
+
+			while (parent != null)
+			{
+				if (graph.isTransparentBounds(parent))
+				{
+					var h = graph.selectionCellsHandler.getHandler(parent);
+
+					if (h != null && h.selectionBorder != null)
+					{
+						h.selectionBorder.node.style.visibility = '';
+					}
+				}
+
+				parent = graph.model.getParent(parent);
+			}
+
+			vertexHandlerReset.apply(this, arguments);
+		};
 
 		mxVertexHandler.prototype.setHandlesVisible = function(visible)
 		{
@@ -17556,13 +19510,23 @@ if (typeof mxVertexHandler !== 'undefined')
 					}
 				}
 			}
-			
+
 			if (this.cornerHandles != null)
 			{
 				for (var i = 0; i < this.cornerHandles.length; i++)
 				{
 					this.cornerHandles[i].node.style.visibility = (visible) ? '' : 'hidden';
 				}
+			}
+
+			// Toggles the dashed selection border for a transparentBounds so the
+			// outline disappears while a child is dragged (mxGraphHandler calls
+			// setHandlesVisibleForCells(false) on every handled cell at drag
+			// start and (true) on release).
+			if (this.graph.isTransparentBounds(this.state.cell) &&
+				this.selectionBorder != null)
+			{
+				this.selectionBorder.node.style.visibility = (visible) ? '' : 'hidden';
 			}
 		};
 
@@ -17736,11 +19700,31 @@ if (typeof mxVertexHandler !== 'undefined')
 			{
 				this.refreshMoveHandles();
 			}
-			// Draws corner rectangles for single selected table cells and rows
-			else if (this.graph.getSelectionCount() == 1 &&
-				this.graph.isCellMovable(this.state.cell) &&
+			// Draws corner rectangles for single-selected table cells,
+			// table rows, and transparentBounds groups. For transparent
+			// groups the rectangles are created up-front on every cell
+			// in the handler set (including auto-handled ancestors), but
+			// only displayed for the actually-selected cell via the
+			// visibility gate in redrawHandles. Creating up-front is
+			// necessary because mxSelectionCellsHandler reuses existing
+			// handlers without calling refresh, so a cell that wasn't
+			// selected initially wouldn't otherwise get rectangles when
+			// the user later cycles selection onto it.
+			//
+			// The transparentBounds branch must NOT gate creation on
+			// getSelectionCount() == 1: refresh() can run while the count is
+			// transiently != 1 and the rectangles would then never be created
+			// for the group, because the handler is afterwards reused with only
+			// redraw() (never refresh()). This happens on undo/redo (the
+			// model-change refresh fires before undoHandler restores the
+			// selection to the group) and when a multi-selection is narrowed
+			// down to the group. The table cell/row branches keep the count
+			// gate; they have no ancestor-only (reused) handler state.
+			else if (this.graph.isCellMovable(this.state.cell) &&
+				(this.graph.isTransparentBounds(this.state.cell) ||
+				(this.graph.getSelectionCount() == 1 &&
 				(this.graph.isTableCell(this.state.cell) ||
-				this.graph.isTableRow(this.state.cell)))
+				this.graph.isTableRow(this.state.cell)))))
 			{
 				this.cornerHandles = []; 
 
@@ -17791,12 +19775,13 @@ if (typeof mxVertexHandler !== 'undefined')
 				{
 					for (var i = 0; i < this.customHandles.length; i++)
 					{
-						// Skip lock and edit icon handles: they position themselves
-						// using the result of this function, so they would cause
-						// oscillating overlap detection.
+						// Skip lock, edit and move icon handles: they position
+						// themselves using the result of this function, so they
+						// would cause oscillating overlap detection.
 						if (this.customHandles[i] != null &&
 							!this.customHandles[i].lockHandle &&
 							!this.customHandles[i].editIconHandle &&
+							!this.customHandles[i].moveGroupHandle &&
 							this.customHandles[i].shape != null &&
 							this.customHandles[i].shape.bounds != null)
 						{
@@ -18049,6 +20034,10 @@ if (typeof mxVertexHandler !== 'undefined')
 		HoverIcons.prototype.editHandle = Graph.createSvgImage(16, 16,
 			'<path stroke="' + HoverIcons.prototype.arrowFill + '" stroke-width="0.7" fill="' + HoverIcons.prototype.arrowFill +
 				'" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04c.39-.39.39-1.02 0-1.41l-2.34-2.34a.9959.9959 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/>',
+				24, 24);
+		HoverIcons.prototype.moveHandle = Graph.createSvgImage(16, 16,
+			'<path stroke="' + HoverIcons.prototype.arrowFill + '" stroke-width="0.7" fill="' + HoverIcons.prototype.arrowFill +
+				'" d="M12 2 L9 5 L11 5 L11 11 L5 11 L5 9 L2 12 L5 15 L5 13 L11 13 L11 19 L9 19 L12 22 L15 19 L13 19 L13 13 L19 13 L19 15 L22 12 L19 9 L19 11 L13 11 L13 5 L15 5 Z"/>',
 				24, 24);
 	
 		mxConstraintHandler.prototype.pointImage = Graph.createSvgImage(5, 5,
@@ -18620,16 +20609,49 @@ if (typeof mxVertexHandler !== 'undefined')
 		};
 	
 		// Redirects moving of edge labels to mxGraphHandler by not starting here.
-		// This will use the move preview of mxGraphHandler (see above).
+		// Also redirects clicks on the move-group handle icon so the drag uses
+		// mxGraphHandler's live preview (with grid snap during drag) instead of
+		// our custom mxHandle path. The icon's DOM redirects events with the
+		// group's state, so mxGraphHandler picks the group as the drag target.
 		var mxVertexHandlerMouseDown = mxVertexHandler.prototype.mouseDown;
 		mxVertexHandler.prototype.mouseDown = function(sender, me)
 		{
 			var model = this.graph.getModel();
 			var parent = model.getParent(this.state.cell);
 			var geo = this.graph.getCellGeometry(this.state.cell);
-			
+
 			// Lets rotation and connect events through
 			var handle = this.getHandleForEvent(me);
+
+			// Skip start() for the move-group handle so mxGraphHandler.mouseDown
+			// can take over and run its own drag (including grid snap and the
+			// dashed preview shape, matching a click on the group's border).
+			if (handle != null && handle <= mxEvent.CUSTOM_HANDLE &&
+				this.customHandles != null)
+			{
+				var ch = this.customHandles[mxEvent.CUSTOM_HANDLE - handle];
+
+				if (ch != null && ch.moveGroupHandle)
+				{
+					// A custom drag set (eg. a tree cell's subtree) must be
+					// started explicitly, as the mxGraphHandler fall-through
+					// derives the drag set from the cell itself.
+					var cells = this.graph.getMoveIconDragCells(this.state.cell);
+
+					if (cells != null)
+					{
+						this.graph.graphHandler.start(this.state.cell,
+							mxEvent.getClientX(me.getEvent()),
+							mxEvent.getClientY(me.getEvent()), cells);
+						this.graph.graphHandler.cellWasClicked = true;
+						this.graph.isMouseTrigger = mxEvent.isMouseEvent(me.getEvent());
+						this.graph.isMouseDown = true;
+						me.consume();
+					}
+
+					return;
+				}
+			}
 
 			if (handle == mxEvent.ROTATION_HANDLE || handle == mxEvent.CONNECT_HANDLE ||
 				!model.isEdge(parent) || geo == null || !geo.relative ||
@@ -18993,9 +21015,17 @@ if (typeof mxVertexHandler !== 'undefined')
 				ch[3].bounds.y = ch[2].bounds.y;
 				ch[3].redraw();
 				
+				// For transparentBounds groups the rectangles exist on every
+				// cell in the handler set (including auto-handled ancestors)
+				// so they're ready to show on cycle, but only the actually-
+				// selected cell displays them.
+				var visible = this.graph.getSelectionCount() == 1 &&
+					(!this.graph.isTransparentBounds(this.state.cell) ||
+						this.graph.isCellSelected(this.state.cell));
+
 				for (var i = 0; i < this.cornerHandles.length; i++)
 				{
-					this.cornerHandles[i].node.style.display = (this.graph.getSelectionCount() == 1) ? '' : 'none';
+					this.cornerHandles[i].node.style.display = visible ? '' : 'none';
 				}
 			}
 			
@@ -19023,7 +21053,8 @@ if (typeof mxVertexHandler !== 'undefined')
 				{
 					if (this.customHandles[i] != null &&
 						(this.customHandles[i].lockHandle ||
-						this.customHandles[i].editIconHandle))
+						this.customHandles[i].editIconHandle ||
+						this.customHandles[i].moveGroupHandle))
 					{
 						this.customHandles[i].redraw();
 					}

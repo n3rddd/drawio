@@ -1,3 +1,276 @@
+18-JUN-2026: 30.2.4
+
+- Replaces mermaid in deployed version
+
+18-JUN-2026: 30.2.3
+
+- Improves generate response classification
+- Scopes GCP2 Zones markers style to closure (#5509)
+- Adds 90 degree rotation for fully unconnected edges [jgraph/drawio#5076]
+- Adds margin to rotate button in ArrangePanel
+- Removes logging for mermaid diagram parse errors
+- Replace static mermaid type lists with the parser's detectType
+- Wrap generated mermaid in an editable group in the chat
+- Show the chat response when it can't be rendered as a diagram
+- Update help icon link for mermaid in ParseDialog to point to GitHub discussion
+- Fix dark mode account icon visibility [jgraph/drawio#5364]
+- Updates DOMPurify from 3.4.9 to 3.4.10
+- Add best-effort recovery for files that fail to load
+- Fix dark mode account icon visibility [jgraph/drawio#5364]
+- Preserve format panel input focus across DOM refresh
+- Add automatic (transparentBounds) toggle and border width to Arrange panel
+- Corrections to security.md
+- Add Mermaid file open and ELK layout support for desktop
+- feat(shape): optional centerStroke border on ellipse center disc
+- Updates DOMPurify from 3.4.10 to 3.4.11
+- chore(mermaid): refresh vendored bundle to commit.4f618a5
+- fix(data): reject property names that are invalid XML attribute names
+- Copies orphaned static function into confluence [DID-19382]
+- Fixes shape library title overflow
+- fix(codec): log valid cell id on invalid style-compression reference
+- feat(config): add experimental compressStyles option
+
+12-JUN-2026: 30.2.2
+
+- Removes mermaid as a dependency
+- Updates to mermaid error handling
+- Guards against multiple success calls
+- FIlters out incorrect mermaid types from logging
+
+12-JUN-2026: 30.2.1
+
+- Correct ELK layout build
+- Adds defensive code in mermaid parsing
+- Removes debug output for electron app
+- Centralises isMermaidSupported()
+
+12-JUN-2026: 30.2.0
+
+- Adds more color flexibility to some Mockup and iOS shapes
+- Adds multicolor support to some iOS shapes
+- Adds multicolor supports to some IOS shapes
+- Adds multicolor support to some GMDL shapes
+- Adds multicolor support to some Mockup shapes
+- Adds multicolor support to some Android shapes
+- Adds multicolor support to soem EIP shapes
+- Adds multicolor support to some Rack shapes
+- Reduce days before stale from 250 to 200
+- Adds multicolor support to some GMDL shapes
+- refactor(text): unify HTML to SVG conversion and convertibility check in mxUtils [DID-18880]
+- fix(text): apply text colors in HTML to SVG label conversion
+- fix(handles): move edit icon from bottom-left to top edge
+- fix(handles): skip move icon in handle padding overlap detection
+- Updates DOMPurify from 3.4.8 to 3.4.9
+- Add custom mermaid parser with native layout engine
+- Improve mermaid output quality: font, sizing, ER columns, diamond shapes
+- Fix sequence fragment frames and improve layout quality
+- Fix gitgraph tags/branches, sequence activations, git commit shapes
+- Achieve 100% vertex and edge match across all 33 test examples
+- Switch to dagre (41KB) as default layout engine, matching mermaid
+- Calibrate horizontal padding to match mermaid node widths exactly
+- Add CoSE-Bilkent mindmap layout, compound dagre subgraphs, and sizing calibration
+- Fix flowchart style parsing, node ordering, edge routing, and default colors
+- Add flat layout mode for flowcharts with subgraph-to-subgraph edges
+- Use compound groups for all subgraphs, skip subgraph-endpoint edges in dagre
+- Use two-pass layout: flat dagre for global optimization, then group bounds
+- Fix edge cycle in subgraph remapping by using first leaf for source
+- Increase group padding for better edge spacing between subgraphs
+- Inflate leaf node sizes in flat dagre to prevent group overlap
+- Fix gitgraph orthogonal edges, label z-order, and label background
+- Add arrows to state diagram edges and clamp exit/entry points to [0,1]
+- Improve state diagram layout: bidirectional edge spread, source representative, and group centering
+- Fix cross-axis mirror to operate per connected component
+- Sort journey actor legend alphabetically to match legacy
+- Add ELK subgraph test case from jgraph/drawio#3634
+- Rewrite native ELK compound layout to use flat approach
+- Switch native ELK to hierarchical layout with disconnected components
+- Improve native ELK layout quality: spacing, edge dedup, isolated nodes
+- Add crossing count evaluation and 2-opt refinement to Sugiyama
+- Improve Sugiyama edge routing and coordinate assignment
+- Add edge routing channels and slot-based bend point spreading
+- Implement ELK-style bus merging and edge routing channels
+- Add chain alignment and tighter internal compound spacing
+- Fix bus routing for deduplicated edges and add section copying
+- Preserve ELK edge routing for compound node edges in cell factory
+- Elk layout improvements
+- Elk improvements
+- Gitgraph rendering: match upstream mermaid output
+- Use .drawio extension for mermaid output diagrams
+- Class diagram rendering: match upstream mermaid output
+- Class edge label styling: match upstream mermaid
+- Flowchart rendering: match upstream mermaid output
+- ER diagram rendering: match upstream mermaid output
+- Flowchart rendering: match upstream mermaid edge labels, subgraph padding, shape sizes
+- State diagram rendering: match upstream mermaid output
+- Mindmap rendering: match upstream mermaid output
+- Sequence diagram rendering: match upstream mermaid output
+- Journey diagram rendering: match upstream mermaid output
+- Mermaid parser coverage plan and per-iteration loop prompt
+- Pie chart rendering: native parser matching upstream mermaid output
+- Packet diagram rendering: native parser matching upstream mermaid output
+- Chart types batch: quadrantChart, timeline, kanban, xychart, radar, block
+- Chart types batch: c4, architecture, sankey, treemap, gantt, zenuml, venn, ishikawa
+- TreeView diagram rendering: final TODO row — all 26 types supported
+- Extract mermaid port to ../drawio-mermaid, consume as single bundle
+- Refactors theme submenu addition logic for better readability and maintainability
+- Adds realtime checksum debugging documentation to CLAUDE.md
+- Add ELK layout bridge (Phase 1 + Phase 2 complete)
+- Wire ELK Layered bridge into draw.io UI with mermaid-parity fixes
+- Register ELK layouts in Arrange menu and tune label spacing
+- Ignore ELK harness runtime artifacts
+- Refactor ElkLayout execution flow to support asynchronous layout preparation and improve error handling
+- Refactor code structure for improved readability and maintainability
+- Update drawio-mermaid bundle: elkjs + block/c4/class layout fixes
+- Add lockedGroup cell style for mermaid subgraph wrappers
+- Add side-by-side ELK engine comparison in Arrange > Layout
+- ElkLayout: improve label snap + fan-in edge endpoints
+- ElkLayout: map verticalAlign=top/bottom to INSIDE label placement
+- ElkLayout: widen edge-node jetty + propagate spacing to compounds
+- Unbundle ELK from mermaid + add Edge Routing menu
+- Add drawio-elk and drawio-mermaid as submodules under modules/
+- Load drawio-elk before drawio-mermaid in production and export paths
+- Add bundles Ant target to rebuild from modules/
+- Prepare mermaid.min.js removal: flag, instrumentation, kill-switch
+- Document modules/ submodules, bundles target, and native-mermaid flag
+- Pin modules/drawio-mermaid to own-elk branch (5480c1c)
+- Track drawio-mermaid on dev after own-elk squash-merge
+- Refresh drawio-mermaid bundle from dev (fea8fbf)
+- Refresh docs and submodule pointers for the native-ports work
+- Build of version 29.7.2
+- Inline configuration editor into dialog instead of iframe
+- Refactors ELK layout menu integration and adds submenu for layout options
+- Pass mermaid config to native parser so theme is honored
+- Refresh drawio-elk + drawio-mermaid bundles with version banner
+- Repoint drawio-mermaid submodule to a reachable commit
+- Removed incorrect gitlinks added for submodules
+- Refresh drawio-mermaid bundle from dev (625a80e)
+- Switch native-port build to sibling-repo layout
+- Restore mermaid2drawio.js to track dev branch
+- Refresh drawio-mermaid bundle from dev (5dfcee9)
+- Refresh drawio-mermaid bundle from dev (4199dfd)
+- Refresh drawio-mermaid bundle from dev (f4786c4)
+- feat(mermaid): apply ElkLayout post-pass for flowchart-elk
+- Replaces diagramly source in GAE release
+- feat(elk): mermaidPolicy on the loadMermaid post-pass
+- feat(elk): default mermaidPolicy for layered, including the menu
+- chore(mermaid): resync drawio-mermaid.min.js for subroutine label slack
+- chore(mermaid): resync drawio-mermaid.min.js for rounded shape pad bump
+- chore(mermaid): resync drawio-mermaid.min.js for layout fixes
+- chore(mermaid): resync drawio-mermaid.min.js for parser-based edge length fix
+- chore(mermaid): resync drawio-mermaid.min.js for arrow size shrink
+- chore(mermaid): drop MindmapCloudShape, resync drawio-mermaid.min.js
+- Adds config dialogs to ELK layout submenu
+- Adds seq* shapes for native mermaid sequence-diagram actor types
+- Fixes seq* actor-type icon rendering in sequence diagrams
+- Restructures Layout menu around ELK with edge-style options
+- Replaces mermaid insert/edit with native parser, drops legacy bridge
+- Fix SeqBoundaryShape circle alignment on lifeline and SeqQueueShape paintForeground translate accumulation
+- Fixes mermaid edit on locked group by reading layer children instead of a non-existent wrapper vertex
+- Preserve user style/label customizations across mermaid locked-group regenerations
+- Refresh drawio-mermaid.min.js with identity-tagging bundle
+- chore(mermaid): resync drawio-mermaid.min.js for state bidi + sequence frame fixes
+- Consolidate ElkLayout into the drawio-elk bundle
+- Refresh drawio-elk.min.js with isolated top-level + keep-mode orthogonal
+- Refresh drawio-elk bundle with cross-scope + clamp fixes
+- Add Preserve Origin option to ELK layout dialog
+- ELK layout: collapse routing/style into one Connector dropdown
+- Clear default Mermaid config so imports use Mermaid's own defaults
+- Wraps Mermaid output in an editable group, drops Editable insert flag
+- Preserves Mermaid group position on edit re-parse
+- Add ELK layouts to custom layout dialog and CSV import
+- Scope CSV-import layouts to the imported cells
+- Fix CSV-import ELK layout: undo, free insert point, edge scope
+- Refines CSV layout documentation and updates ELK layout configurations for clarity
+- Marks WebCola plugin deprecated in favor of ELK layouts
+- Tunes CSV verticalflow/horizontalflow ELK config to match mxHierarchicalLayout
+- Refresh drawio-mermaid bundle (container-aware group wrapping)
+- Re-vendor drawio-mermaid + drawio-elk bundles
+- vendor: update drawio-elk bundle to 4ad207d (bug-audit fixes)
+- Refresh drawio-mermaid bundle (6add5f0)
+- Refresh drawio-mermaid and drawio-elk bundles
+- refactor(elk): drive all layout routes through the ElkLayout facade
+- fix(elk): preserve transparentBounds group origin on layout
+- fix(mermaid): don't preserve layout routing as a user edit on re-parse
+- fix(elk): pin transparentBounds groups at (0,0); thin editor wrapper
+- fix(mermaid): vendor native composite-state direction fix
+- fix(mermaid): use legacy config when migrating shape=image cells
+- feat(mermaid): add mermaidSankeyLink ribbon edge shape
+- feat(shapes): conditional labelBounds for stencils via boundedLbl
+- fix(layout): omit negative stress iteration limit so -1 means no cap
+- feat(layout): add help links to the layout config dialogs
+- Removes upstream mermaid.min.js, native parser is the only path
+- Moves the tree subtree drag handle to the top-left move icon
+- Adds footerSize and footerColor styles to rectangles
+- Moves the bundles target from github-build.xml to build.xml
+- vendor: update mermaid (f115fed) and elk (df6c57b) bundles
+- Restores exact pre-linearization tree state
+- vendor: update elk (e8ef0e0) and mermaid (ebea636) bundles
+- Adds centerRadius and centerColor styles to ellipses
+
+05-JUN-2026: 30.1.2
+
+- feat(transparentBounds): read-only derived geometry, reset on enable
+- Move DIALOG_STYLE_GUIDE.md to docs/dialog-style-guide.md
+- feat(appUpdate): notify of available update via notification bell
+- feat(exportDialog): Advanced section for per-format export dialogs
+- feat(pageSetup): per-page initial view (Use Current / Reset)
+- fix(sketch): resolve light-dark fill to current mode for fillStyle=auto
+- Updates DOMPurify from 3.4.7 to 3.4.8
+- Adds support for notion.com domain
+- fix(pageSetup): full-width initial-view buttons + label tooltips
+- fix(transparentBounds): always create group corner handles on refresh
+- Updates release process for notion extension
+- fix(custom-actions): restore model-mutating toggle/show/hide for custom-link clicks [DID-19248]
+
+02-JUN-2026: 30.1.1
+
+- Extends generate timeout to 90s
+- refactor(swimlane): rename chinSize style to footerSize
+
+02-JUN-2026: 30.1.0
+
+- Build of version 30.0.4
+- Adds transparentBounds groups, moveIcon, connectIcon, groupPadding shorthand
+- Adds step-based animations and custom actions
+- Fixes empty paste element in pasteCells text/plain branch
+- Fixes XML pasted as text when Ctrl is held through copy/paste
+- Adds immediate flag for parallel animation steps and customAction window persistence
+- Fixes transparentBounds bounds and group/toggle integration
+- Updates DOMPurify from 3.4.5 to 3.4.7
+- Fixes pattern fill loss on later PDF pages [jgraph/drawio#5578]
+- Fixes transparentBounds bounds and group/toggle integration
+- Adds multi-edge / multi-corner resize to mxWindow and Dialog
+- Changes default groupPadding for transparentBounds to 0 [jgraph/drawio#5607]
+- Fixes overlapping corner icons on nested transparentBounds groups
+- Adds selection padding and corner handles for nested transparentBounds groups
+- Moves svgdata plugin behavior into core SVG export
+- Inlines built-in plugin dropdown in PluginsDialog
+- Moves Edit/Layers/Tags into collapsible Advanced section in publish/embed/export dialogs
+- Routes dialog help icons to the new GitHub Discussions
+- Routes Embed/Export HTML help icons to the merged docs page
+- Collapses redundant transparentBounds wrapper after sibling removal
+- Pins dialog buttons and scrolls content when dialog exceeds viewport
+- Defers sidebar thumb rendering until scrolled into view [jgraph/drawio-desktop#2444]
+- Fixes mxMorphing animating transparentBounds cells
+- Fix rubberband selecting page text when Cmd/Ctrl held on macOS
+- Fix Safari scrolling the canvas to top-left on Cmd/Ctrl+click
+- Fix paste swallowed after Cmd/Ctrl+rubberband when a cell was pre-selected
+- Fix color picker window restoring to wrong empty size when reopened collapsed
+- Fixes paste/crop/insert mis-positioning of transparentBounds groups
+- Fixes stale edge routing when a transparentBounds child moves
+- Fixes autosize/layout corrupting transparentBounds group geometry
+- Fixes Align/Distribute on transparentBounds groups
+- Fixes childLayout collapsing/corrupting a transparentBounds parent
+- Fixes collapse corrupting transparentBounds group geometry
+- Fixes transparentBounds derived bounds ignoring edge children
+- Add Collapse All / Expand All to sidebar section context menu
+- Fixes opening CLI-exported PNGs with a zlib-compressed embedded diagram
+- Add JSON export of diagram structure and metadata
+- Condenses CLAUDE.md
+- Fixes color picker opening behind modal dialogs (e.g. Page Setup background)
+- Fixes line height change affecting elements outside the cell editor
+- feat(swimlane): configurable chin (chinSize) on mxSwimlane
+
 27-MAY-2026: 30.0.4
 
 - Adds GCP3 to build

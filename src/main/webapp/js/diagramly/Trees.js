@@ -1242,89 +1242,32 @@
 			return cells;
 		};
 		
-		var vertexHandlerRefresh = mxVertexHandler.prototype.refresh;
-		
-		mxVertexHandler.prototype.refresh = function()
+		/**
+		 * Returns true if the given cell shows the move icon handle (top-left
+		 * corner, see createCustomHandles in Graph.js) for moving its subtree.
+		 */
+		function isSubtreeMovable(cell)
 		{
-			vertexHandlerRefresh.apply(this, arguments);
-
-			if (((isTreeMoving(this.state.cell) || isTreeVertex(this.state.cell)) &&
-				!hasLayoutParent(this.state.cell)) && this.graph.getOutgoingTreeEdges(
-				this.state.cell).length > 0 && !this.graph.isCellCollapsed(this.state.cell))
-			{
-				if (this.moveHandle == null)
-				{
-					this.moveHandle = mxUtils.createImage(Editor.moveImage);
-					this.moveHandle.setAttribute('title', 'Move Subtree');
-					this.moveHandle.style.position = 'absolute';
-					this.moveHandle.style.cursor = 'pointer';
-					this.moveHandle.style.width = '24px';
-					this.moveHandle.style.height = '24px';
-					this.graph.container.appendChild(this.moveHandle);
-					this.redrawMoveHandle();
-					
-					mxEvent.addGestureListeners(this.moveHandle, mxUtils.bind(this, function(evt)
-					{
-						this.graph.graphHandler.start(this.state.cell,
-							mxEvent.getClientX(evt), mxEvent.getClientY(evt),
-							this.graph.getSubtree(this.state.cell));
-						this.graph.graphHandler.cellWasClicked = true;
-						this.graph.isMouseTrigger = mxEvent.isMouseEvent(evt);
-						this.graph.isMouseDown = true;
-						ui.hoverIcons.reset();
-						mxEvent.consume(evt);
-					}));
-				}
-			}
-			else if (this.moveHandle != null)
-			{
-				this.moveHandle.parentNode.removeChild(this.moveHandle);
-				this.moveHandle = null;
-			}
+			return ((isTreeMoving(cell) || isTreeVertex(cell)) &&
+				!hasLayoutParent(cell)) && graph.getOutgoingTreeEdges(
+				cell).length > 0 && !graph.isCellCollapsed(cell);
 		};
 
-		var vertexHandlerRedrawHandles = mxVertexHandler.prototype.redrawHandles;
+		var graphIsMoveIconVisible = graph.isMoveIconVisible;
 
-		mxVertexHandler.prototype.redrawHandles = function()
+		graph.isMoveIconVisible = function(cell)
 		{
-			vertexHandlerRedrawHandles.apply(this, arguments);
-			this.redrawMoveHandle();
+			return graphIsMoveIconVisible.apply(this, arguments) ||
+				isSubtreeMovable(cell);
 		};
-		
-		mxVertexHandler.prototype.redrawMoveHandle = function()
-		{
-			if (this.moveHandle != null)
-			{
-				this.moveHandle.style.left = this.state.x + this.state.width +
-					((this.state.width < 40) ? 10 : 0) + 2 + 'px';
-				this.moveHandle.style.top = this.state.y + this.state.height +
-					((this.state.height < 40) ? 10 : 0) + 2 + 'px';
-			}
-		};
-		
-		var vertexHandlerSetHandlesVisible = mxVertexHandler.prototype.setHandlesVisible;
 
-		mxVertexHandler.prototype.setHandlesVisible = function(visible)
-		{
-			vertexHandlerSetHandlesVisible.apply(this, arguments);
-			
-			if (this.moveHandle != null)
-			{
-				this.moveHandle.style.display = (visible) ? '' : 'none';
-			}
-		};
-		
-		var vertexHandlerDestroy = mxVertexHandler.prototype.destroy;
+		// Drags the whole subtree when the move icon is used
+		var graphGetMoveIconDragCells = graph.getMoveIconDragCells;
 
-		mxVertexHandler.prototype.destroy = function(sender, me)
+		graph.getMoveIconDragCells = function(cell)
 		{
-			vertexHandlerDestroy.apply(this, arguments);
-
-			if (this.moveHandle != null)
-			{
-				this.moveHandle.parentNode.removeChild(this.moveHandle);
-				this.moveHandle = null;
-			}
+			return (isSubtreeMovable(cell)) ? this.getSubtree(cell) :
+				graphGetMoveIconDragCells.apply(this, arguments);
 		};
 	};
 

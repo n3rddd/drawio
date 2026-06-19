@@ -423,7 +423,7 @@ Menus.prototype.init = function()
 			}));
 		}), parent);
 		menu.addSeparator(parent);
-		menu.addItem(mxResources.get('horizontalTree'), null, mxUtils.bind(this, function()
+		menu.addItem(mxResources.get('horizontalTree') + '...', null, mxUtils.bind(this, function()
 		{
 			var layout = new mxCompactTreeLayout(graph, true);
 			layout.edgeRouting = false;
@@ -439,7 +439,7 @@ Menus.prototype.init = function()
 				}
 			}));
 		}), parent);
-		menu.addItem(mxResources.get('verticalTree'), null, mxUtils.bind(this, function()
+		menu.addItem(mxResources.get('verticalTree') + '...', null, mxUtils.bind(this, function()
 		{
 			var layout = new mxCompactTreeLayout(graph, false);
 			layout.edgeRouting = false;
@@ -455,7 +455,7 @@ Menus.prototype.init = function()
 				}
 			}));
 		}), parent);
-		menu.addItem(mxResources.get('radialTree'), null, mxUtils.bind(this, function()
+		menu.addItem(mxResources.get('radialTree') + '...', null, mxUtils.bind(this, function()
 		{
 			var layout = new mxRadialTreeLayout(graph);
 			layout.levelDistance = 80;
@@ -471,57 +471,33 @@ Menus.prototype.init = function()
 			}));
 		}), parent);
 		menu.addSeparator(parent);
-		menu.addItem(mxResources.get('organic'), null, mxUtils.bind(this, function()
+		menu.addItem(mxResources.get('organic') + '...', null, mxUtils.bind(this, function()
 		{
 			var layout = new mxFastOrganicLayout(graph);
-			
+
 			promptSpacing(layout.forceConstant, mxUtils.bind(this, function(newValue)
 			{
 				this.editorUi.tryAndHandle(mxUtils.bind(this, function()
 				{
 					layout.forceConstant = newValue;
-					
+
 					this.editorUi.executeLayout(function()
 					{
 						var tmp = graph.getSelectionCell();
-						
+
 						if (tmp == null || graph.getModel().getChildCount(tmp) == 0)
 						{
 							tmp = graph.getDefaultParent();
 						}
-						
+
 						layout.execute(tmp);
-						
+
 						if (graph.getModel().isVertex(tmp))
 						{
 							graph.updateGroupBounds([tmp], graph.gridSize * 2, true);
 						}
 					}, true);
 				}));
-			}));
-		}), parent);
-		menu.addItem(mxResources.get('circle'), null, mxUtils.bind(this, function()
-		{
-			this.editorUi.tryAndHandle(mxUtils.bind(this, function()
-			{
-				var layout = new mxCircleLayout(graph);
-				
-				this.editorUi.executeLayout(function()
-				{
-					var tmp = graph.getSelectionCell();
-					
-					if (tmp == null || graph.getModel().getChildCount(tmp) == 0)
-					{
-						tmp = graph.getDefaultParent();
-					}
-					
-					layout.execute(tmp);
-					
-					if (graph.getModel().isVertex(tmp))
-					{
-						graph.updateGroupBounds([tmp], graph.gridSize * 2, true);
-					}
-				}, true);
 			}));
 		}), parent);
 	})));
@@ -540,7 +516,28 @@ Menus.prototype.init = function()
 		this.addSubmenu('navigation', menu, parent);
 		this.addSubmenu('insert', menu, parent);
 		this.addSubmenu('layout', menu, parent);
-		this.addMenuItems(menu, ['-', 'group', 'ungroup', 'removeFromGroup', '-', 'clearWaypoints', 'autosize'], parent);
+		this.addMenuItems(menu, ['-'], parent);
+
+		var groupItem = this.addMenuItem(menu, 'group', parent);
+
+		if (groupItem != null)
+		{
+			var help = this.editorUi.createHelpIcon(
+				'https://github.com/jgraph/drawio/discussions/5607');
+			help.style.display = 'inline-block';
+			help.style.verticalAlign = 'middle';
+			help.style.marginLeft = '6px';
+			var cells = groupItem.getElementsByTagName('td');
+
+			// Append to the label column (col2) so the icon sits immediately
+			// next to the "Group" label, not next to the shortcut in col3.
+			if (cells.length > 1)
+			{
+				cells[1].appendChild(help);
+			}
+		}
+
+		this.addMenuItems(menu, ['ungroup', 'removeFromGroup', '-', 'clearWaypoints', 'autosize'], parent);
 	}))).isEnabled = isGraphEnabled;
 	this.put('insert', new Menu(mxUtils.bind(this, function(menu, parent)
 	{

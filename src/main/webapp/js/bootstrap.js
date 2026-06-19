@@ -282,8 +282,14 @@ if (urlParams['dev'] == '1')
     {
         mxscript('js/desktop/DesktopLibrary.js');
         mxscript('js/desktop/ElectronApp.js');
+
+        // ELK and Mermaid engines. The desktop is offline, so the on-demand
+        // loader in EditorUi.loadMermaid never runs; load them eagerly here,
+        // ELK before Mermaid (Mermaid binds to window.ELK).
+        mxscript('js/elk/drawio-elk.min.js');
+        mxscript('js/mermaid/drawio-mermaid.min.js');
     }
-    
+
     mxscript(drawDevUrl + 'js/PostConfig.js');
 }
 else
@@ -316,7 +322,19 @@ else
                                 {
                                     mxscript('js/shapes-14-6-5.min.js', function()
                                     {
-                                        mxscript('js/PostConfig.js');
+                                        // ELK and Mermaid engines for the layout menu
+                                        // and Mermaid file import. Loaded eagerly here
+                                        // because the desktop is offline, which disables
+                                        // the on-demand loader in EditorUi.loadMermaid.
+                                        // ELK must precede Mermaid so that window.ELK is
+                                        // published before the Mermaid bundle binds to it.
+                                        mxscript('js/elk/drawio-elk.min.js', function()
+                                        {
+                                            mxscript('js/mermaid/drawio-mermaid.min.js', function()
+                                            {
+                                                mxscript('js/PostConfig.js');
+                                            });
+                                        });
                                     });
                                 });
                             });

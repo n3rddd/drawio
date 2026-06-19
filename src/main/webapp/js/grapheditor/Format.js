@@ -188,7 +188,10 @@ Format.prototype.immediateRefresh = function()
 	{
 		return;
 	}
-	
+
+	// Snapshots the focused input so it can be restored after the
+	// rebuild (eg. while tabbing through inputs, see issue #5368)
+	var focusState = this.captureFocus();
 	this.clear();
 	var ui = this.editorUi;
 	var graph = ui.editor.graph;
@@ -200,7 +203,11 @@ Format.prototype.immediateRefresh = function()
 	this.container.appendChild(div);
 	
 	var ss = ui.getSelectionState();
-	var containsLabel = ss.containsLabel;
+	// transparentBounds cells store 0x0 geometry (their bounds are derived from
+	// the children), which flags the selection as a label. For tab selection
+	// they behave like regular cells, so they keep the current tab (e.g. Arrange)
+	// instead of switching to the separate label tab memory (defaults to Style).
+	var containsLabel = ss.containsLabel && !ss.transparentBounds;
 	var currentLabel = null;
 	var currentPanel = null;
 	
@@ -364,6 +371,93 @@ Format.prototype.immediateRefresh = function()
 	}
 	
 	div.className = 'geFormatTitleContainer';
+
+	// Restores focus and selection on the rebuilt input
+	this.restoreFocus(focusState);
+};
+
+/**
+ * Records the currently focused format input so it can be restored
+ * after the panel DOM is rebuilt in immediateRefresh. The input is
+ * identified by its index among the focusable controls in the panel
+ * (the rebuild is deterministic for a given selection, so the order
+ * is stable). Returns null if focus is not on a panel input, in which
+ * case restoreFocus is a no-op (eg. focus is in the canvas).
+ */
+Format.prototype.captureFocus = function()
+{
+	var active = document.activeElement;
+
+	if (active == null || !this.container.contains(active) ||
+		(active.nodeName != 'INPUT' && active.nodeName != 'SELECT' &&
+		active.nodeName != 'TEXTAREA'))
+	{
+		return null;
+	}
+
+	var focusables = this.container.querySelectorAll('input, select, textarea');
+	var index = Array.prototype.indexOf.call(focusables, active);
+
+	if (index < 0)
+	{
+		return null;
+	}
+
+	var state = {index: index, nodeName: active.nodeName, type: active.type};
+
+	// Caret/selection is only available on text inputs (number, select,
+	// color throw on access, so this is guarded)
+	try
+	{
+		state.selectionStart = active.selectionStart;
+		state.selectionEnd = active.selectionEnd;
+		state.selectionDirection = active.selectionDirection;
+	}
+	catch (e)
+	{
+		// ignore
+	}
+
+	return state;
+};
+
+/**
+ * Restores focus and selection captured by captureFocus on the rebuilt
+ * panel. Skips if the control at the recorded index no longer matches
+ * (eg. a conditional field changed the layout) or is not visible.
+ */
+Format.prototype.restoreFocus = function(state)
+{
+	if (state == null)
+	{
+		return;
+	}
+
+	var focusables = this.container.querySelectorAll('input, select, textarea');
+	var el = focusables[state.index];
+
+	if (el == null || el.nodeName != state.nodeName || el.type != state.type ||
+		el.offsetParent == null)
+	{
+		return;
+	}
+
+	el.focus({preventScroll: true});
+
+	if (state.selectionStart != null)
+	{
+		try
+		{
+			el.setSelectionRange(
+				Math.min(state.selectionStart, el.value.length),
+				Math.min(state.selectionEnd, el.value.length),
+				state.selectionDirection);
+		}
+		catch (e)
+		{
+			// ignore
+		}
+	}
 };
 
 /**
@@ -2238,6 +2332,22 @@ ArrangePanel.prototype.addAngle = function(div)
 		{
 			btn.style.marginTop = '10px';
 		}
+
+		// Adds a separate rotate-by-90 button for fully unconnected edges (issue #5076)
+		if (ss.vertices.length == 0 && ss.edges.length > 0 && !ss.connectedEdges)
+		{
+			mxUtils.br(div);
+
+			var rotateBtn = mxUtils.button(mxResources.get('turn'), function(evt)
+			{
+				ui.actions.get('rotateEdge').funct(evt);
+			});
+
+			rotateBtn.setAttribute('title', mxResources.get('turn'));
+			rotateBtn.className = 'geFullWidthElement';
+			rotateBtn.style.marginTop = '2px';
+			div.appendChild(rotateBtn);
+		}
 	}
 	
 	if (input != null)
@@ -2352,6 +2462,25 @@ ArrangePanel.prototype.addGeometry = function(container)
 	var graph = ui.editor.graph;
 	var model = graph.getModel();
 	var rect = ui.getSelectionState();
+
+	// transparentBounds cells store their geometry pinned at (0,0,0,0) and derive
+	// their visible box from their children, so position and size are shown
+	// read-only using the derived bounds rather than the stored geometry.
+	var transparent = rect.vertices.length == 1 && rect.edges.length == 0 &&
+		graph.isTransparentBounds(rect.vertices[0]);
+
+	// Visible bounds of the selected transparentBounds cell in parent coordinates
+	// (matching the position/size convention of the editable inputs).
+	var getTransparentRect = function()
+	{
+		var cell = rect.vertices[0];
+		var local = graph.getTransparentBounds(cell);
+		var cellGeo = graph.getCellGeometry(cell);
+
+		return (local != null && cellGeo != null) ? new mxRectangle(
+			cellGeo.x + local.x, cellGeo.y + local.y,
+			local.width, local.height) : null;
+	};
 
 	var div = this.createPanel();
 	div.style.height = '60px';
@@ -2477,14 +2606,18 @@ ArrangePanel.prototype.addGeometry = function(container)
 		}
 	});
 	
-	if (rect.resizable || rect.row || rect.cell)
+	if (rect.resizable || rect.row || rect.cell || transparent)
 	{
 		container.appendChild(div);
 	}
-	
+
 	var div2 = this.createPanel();
 	div2.style.paddingBottom = '30px';
-	
+
+	// Size and position read as a single block, so the divider between them
+	// (the position section's top border) is removed.
+	div2.style.borderTop = 'none';
+
 	var span = document.createElement('div');
 	span.style.position = 'absolute';
 	span.style.width = '70px';
@@ -2504,7 +2637,33 @@ ArrangePanel.prototype.addGeometry = function(container)
 	}, this.getUnitStep(), null, null, this.isFloatUnit());
 
 	mxUtils.br(div2);
-	
+
+	// Position and size are derived from the children for transparentBounds cells,
+	// so the inputs are read-only and the steppers, autosize and constrain
+	// proportions options are hidden. The replacement "border" input (groupPadding)
+	// is added below the position inputs, just above the automatic checkbox.
+	if (transparent)
+	{
+		var roInputs = [width, height, left, top];
+
+		for (var i = 0; i < roInputs.length; i++)
+		{
+			roInputs[i].setAttribute('readonly', 'readonly');
+			mxUtils.setOpacity(roInputs[i], 60);
+
+			if (roInputs[i].nextSibling != null)
+			{
+				roInputs[i].nextSibling.style.visibility = 'hidden';
+			}
+		}
+
+		autosizeBtn.style.visibility = 'hidden';
+		wrapper.style.display = 'none';
+
+		// Drops the now-empty space left by the hidden constrain-proportions row.
+		div.style.height = '42px';
+	}
+
 	var coordinateLabels = true;
 	var dx = null;
 	var dy = null;
@@ -2607,6 +2766,23 @@ ArrangePanel.prototype.addGeometry = function(container)
 	var listener = mxUtils.bind(this, function(sender, evt, force)
 	{
 		rect = ui.getSelectionState();
+
+		if (transparent)
+		{
+			var tb = getTransparentRect();
+
+			if (tb != null)
+			{
+				div.style.display = '';
+				div2.style.display = '';
+				width.value = this.inUnit(tb.width) + ' ' + this.getUnit();
+				height.value = this.inUnit(tb.height) + ' ' + this.getUnit();
+				left.value = this.inUnit(tb.x) + ' ' + this.getUnit();
+				top.value = this.inUnit(tb.y) + ' ' + this.getUnit();
+
+				return;
+			}
+		}
 
 		if (!rect.containsLabel && rect.vertices.length == graph.getSelectionCount() &&
 			rect.width != null && rect.height != null)
@@ -2788,6 +2964,79 @@ ArrangePanel.prototype.addGeometry = function(container)
 		}
 		container.appendChild(div2);
 	}
+
+	// Adds the "automatic" checkbox at the bottom of the section for a single
+	// group with child cells. It toggles transparentBounds, which derives the
+	// group's position and size from its children instead of storing them, so
+	// it only applies when there are children to derive from (an empty group or
+	// swimlane would collapse to wrong bounds). The margin clears the
+	// absolutely positioned position labels above it.
+	var groupCell = (rect.vertices.length == 1 && rect.edges.length == 0) ?
+		rect.vertices[0] : null;
+
+	if (groupCell != null && model.getChildCount(groupCell) > 0)
+	{
+		div2.style.paddingBottom = '6px';
+
+		// When automatic (transparentBounds) is on, a "border width" input sets the
+		// groupPadding (the gap kept between the derived bounds and the children).
+		// It sits below the position inputs and above the automatic checkbox, with
+		// its input aligned to the right column of the size/position rows.
+		if (transparent)
+		{
+			var borderWrapper = document.createElement('div');
+			borderWrapper.style.position = 'relative';
+			borderWrapper.style.height = '24px';
+			// Clears the absolutely positioned position labels above (their
+			// marginTop 10 + height 16) and adds the same gap the position row
+			// has above it, so the spacing before the border row is consistent.
+			borderWrapper.style.marginTop = '40px';
+
+			var borderLabel = document.createElement('span');
+			borderLabel.style.position = 'absolute';
+			borderLabel.style.left = '0px';
+			borderLabel.style.lineHeight = '24px';
+			mxUtils.write(borderLabel, mxResources.get('borderWidth'));
+			borderLabel.setAttribute('title', mxResources.get('borderWidth'));
+			borderWrapper.appendChild(borderLabel);
+
+			var borderInput = document.createElement('input');
+			borderInput.setAttribute('type', 'text');
+			borderInput.style.position = 'absolute';
+			borderInput.style.left = '148px';
+			borderInput.style.width = '52px';
+			borderInput.setAttribute('title', mxResources.get('borderWidth'));
+			borderWrapper.appendChild(borderInput);
+			div2.appendChild(borderWrapper);
+
+			this.installInputHandler(borderInput, mxConstants.STYLE_GROUP_PADDING,
+				0, 0, 999, '', null, false);
+
+			var borderListener = mxUtils.bind(this, function()
+			{
+				if (document.activeElement != borderInput)
+				{
+					var value = parseInt(mxUtils.getValue(ui.getSelectionState().style,
+						mxConstants.STYLE_GROUP_PADDING, 0));
+					borderInput.value = isNaN(value) ? 0 : value;
+				}
+			});
+
+			model.addListener(mxEvent.CHANGE, borderListener);
+			this.listeners.push({destroy: function() { model.removeListener(borderListener); }});
+			this.addKeyHandler(borderInput, borderListener);
+			borderListener();
+		}
+
+		var autoWrapper = document.createElement('div');
+		autoWrapper.className = 'geFormatEntry';
+		autoWrapper.style.marginTop = transparent ? '6px' : '26px';
+		var autoOpt = this.createCellOption(mxResources.get('automatic'),
+			'transparentBounds', null, '1', 'null');
+		autoOpt.className = 'geFullWidthElement';
+		autoWrapper.appendChild(autoOpt);
+		div2.appendChild(autoWrapper);
+	}
 };
 
 /**
@@ -2802,11 +3051,20 @@ ArrangePanel.prototype.addGeometryHandler = function(input, fn)
 	
 	function update(evt)
 	{
+		// Read-only inputs (e.g. the derived position/size of a transparentBounds
+		// group) must never write back: their displayed value already includes the
+		// derived offset, so writing it into the stored geometry corrupts it. A
+		// blur fired while the panel is rebuilt would otherwise do exactly that.
+		if (input.readOnly)
+		{
+			return;
+		}
+
 		if (input.value != '')
 		{
 			var value = parseFloat(input.value);
 
-			if (isNaN(value)) 
+			if (isNaN(value))
 			{
 				input.value = initialValue + ' ' + panel.getUnit();
 			}
@@ -3779,7 +4037,9 @@ TextFormatPanel.prototype.addFont = function(container)
 	var formatted = mxUtils.getValue(ss.style, 'html', 0) == '1';
 
 	// Uses svgWhiteSpace when convertToSvg is active, whiteSpace otherwise
-	var isSvgMode = formatted && ((graph.getSelectionCount() > 1 && ss.style['convertToSvg'] == '1') ||
+	// (vertical text always uses foreignObject, see mxUtils.convertHtmlToSvg)
+	var isSvgMode = formatted && !mxUtils.isVerticalTextDirection(ss.style[mxConstants.STYLE_TEXT_DIRECTION]) &&
+		((graph.getSelectionCount() > 1 && ss.style['convertToSvg'] == '1') ||
 		(graph.getSelectionCount() == 1 && state != null && state.text != null &&
 		state.text.node != null && state.text.node.getElementsByTagName('foreignObject').length == 0));
 
@@ -3829,52 +4089,63 @@ TextFormatPanel.prototype.addFont = function(container)
 	convertToSvg.style.fontWeight = 'bold';
 	extraPanel.appendChild(convertToSvg);
 	
+	var convertInput = convertToSvg.getElementsByTagName('input')[0];
+
 	if (!formatted)
 	{
-		convertToSvg.style.opacity = '0.5';
-		convertToSvg.getElementsByTagName('input')[0].setAttribute('disabled', 'disabled');
+		// Keeps a checked option enabled so that it can be unchecked
+		if (!convertInput.checked)
+		{
+			convertToSvg.style.opacity = '0.5';
+			convertInput.setAttribute('disabled', 'disabled');
+		}
 	}
 	else
 	{
-		// Disables option if any selected cell's label contains HTML elements
-		// that are not supported by the HTML-to-SVG conversion in mxSvgCanvas2D
-		var supportedTags = {'H1': 1, 'H2': 1, 'H3': 1, 'H4': 1, 'H5': 1, 'H6': 1,
-			'P': 1, 'PRE': 1, 'BLOCKQUOTE': 1, 'DIV': 1, 'SUP': 1, 'SUB': 1,
-			'B': 1, 'I': 1, 'SPAN': 1, 'FONT': 1, 'STRIKE': 1, 'U': 1, 'BR': 1};
+		// Disables option if the conversion is not possible for any selected
+		// cell's label, using a dry-run of the same code that the renderer
+		// uses for the actual conversion (see mxUtils.canConvertHtmlToSvg)
 		var hasUnsupported = false;
 		var cells = graph.getSelectionCells();
 
 		for (var i = 0; i < cells.length && !hasUnsupported; i++)
 		{
-			var state = graph.view.getState(cells[i]);
-			var label = (state != null) ? graph.cellRenderer.getLabelValue(state) : null;
-			
-			if (label != null && label.length > 0)
-			{
-				var tmp = document.createElement('div');
-				tmp.innerHTML = label;
-				var elts = tmp.getElementsByTagName('*');
+			var cellState = graph.view.getState(cells[i]);
+			var label = (cellState != null) ? graph.cellRenderer.getLabelValue(cellState) : null;
 
-				for (var j = 0; j < elts.length; j++)
-				{
-					if (supportedTags[elts[j].nodeName] == null ||
-						(elts[j].style != null && elts[j].style.backgroundColor != ''))
-					{
-						hasUnsupported = true;
-						break;
-					}
-				}
+			if (label != null && label.length > 0 && !mxUtils.canConvertHtmlToSvg(label, {
+				dir: cellState.style[mxConstants.STYLE_TEXT_DIRECTION],
+				fontSize: mxUtils.getValue(cellState.style, mxConstants.STYLE_FONTSIZE,
+					mxConstants.DEFAULT_FONTSIZE)}))
+			{
+				hasUnsupported = true;
 			}
 		}
 
 		if (hasUnsupported)
 		{
-			convertToSvg.style.opacity = '0.5';
-			convertToSvg.getElementsByTagName('input')[0].setAttribute('disabled', 'disabled');
-			convertToSvg.setAttribute('title',
-				'Label contains unsupported HTML for SVG conversion. ' +
-				'Supported: H1-H6, P, PRE, BLOCKQUOTE, DIV, B, I, U, STRIKE, ' +
-				'SUP, SUB, SPAN, FONT, BR (without background color).');
+			// Keeps a checked option enabled so that it can be unchecked
+			if (!convertInput.checked)
+			{
+				convertToSvg.style.opacity = '0.5';
+				convertInput.setAttribute('disabled', 'disabled');
+				convertToSvg.setAttribute('title',
+					'Label contains unsupported HTML or vertical text for SVG conversion. ' +
+					'Supported: H1-H6, P, PRE, BLOCKQUOTE, DIV, B, I, U, STRIKE, ' +
+					'SUP, SUB, SPAN, FONT, BR (without background color).');
+			}
+			else
+			{
+				// Visible warning as tooltips are not available on touch devices
+				var warning = document.createElement('span');
+				warning.style.marginLeft = '4px';
+				warning.style.cursor = 'default';
+				mxUtils.write(warning, '⚠︎');
+				convertToSvg.appendChild(warning);
+				convertToSvg.setAttribute('title',
+					'Label cannot be converted to SVG and falls back to HTML rendering. ' +
+					'Uncheck to remove the style.');
+			}
 		}
 	}
 
@@ -4005,7 +4276,10 @@ TextFormatPanel.prototype.addFont = function(container)
 					}
 				}
 
-				if (node != null)
+				// Only changes the line height if the selection is inside the cell
+				// editor (eg. ignores a Ctrl+A selection outside the canvas)
+				if (graph.cellEditor.textarea != null &&
+					graph.cellEditor.textarea.contains(node))
 				{
 					if (node != graph.cellEditor.textarea)
 					{

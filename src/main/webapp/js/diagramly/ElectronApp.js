@@ -943,17 +943,18 @@ mxStencilRegistry.allowEval = false;
 	App.prototype.loadArgs = function(argsObj)
 	{
 		var paths = argsObj.args;
-		
-		// If a file is passed, and it is not an argument (has a leading -) 
+		var layoutName = argsObj.layout;
+
+		// If a file is passed, and it is not an argument (has a leading -)
 		if (paths !== undefined && paths[0] != null && paths[0].indexOf('-') != 0 && this.spinner.spin(document.body, mxResources.get('loading')))
 		{
 			var path = paths[0];
 			this.hideDialog();
-			
+
 			var success = mxUtils.bind(this, function(fileEntry, data, stat, name, isModified)
 			{
 				this.spinner.stop();
-				
+
 				if (data != null)
 				{
 					var file = new LocalFile(this, data, name || '');
@@ -961,6 +962,13 @@ mxStencilRegistry.allowEval = false;
 					file.stat = stat;
 					file.setModified(isModified? true : false);
 					this.fileLoaded(file);
+
+					// --layout: run the requested ELK layout once the diagram
+					// is loaded (applies to any opened file, generated or not).
+					if (layoutName != null)
+					{
+						this.runStartupLayout(layoutName);
+					}
 				}
 			});
 			
@@ -1004,6 +1012,100 @@ mxStencilRegistry.allowEval = false;
 			this.checkDrafts();
 		}
 	}
+
+	// Resolves once isReady() returns true. The elk/mermaid bundles load
+	// asynchronously during startup (see bootstrap.js), so a file or layout
+	// passed on the command line can be processed before the bundle that handles
+	// it is ready. Calls success() immediately if already ready, otherwise polls
+	// briefly before giving up via error().
+	App.prototype.whenScriptReady = function(isReady, success, error)
+	{
+		if (isReady())
+		{
+			success();
+			return;
+		}
+
+		var attempts = 0;
+
+		var timer = window.setInterval(function()
+		{
+			if (isReady())
+			{
+				window.clearInterval(timer);
+				success();
+			}
+			else if (++attempts >= 100) // ~10s at 100ms
+			{
+				window.clearInterval(timer);
+
+				if (error != null)
+				{
+					error();
+				}
+			}
+		}, 100);
+	};
+
+	// Runs a layout on the freshly-opened diagram. The spec is either a
+	// MENU_PRESETS preset name (verticalFlow, ... — the same presets as the
+	// Arrange > Layout menu, shared with drawio-mcp) or the custom-layout-dialog
+	// JSON (an array of {layout, config}, starting with '[') for layout
+	// sequences and per-layout options. ElkLayout/window.ELK are provided by the
+	// eagerly-loaded js/elk/drawio-elk.min.js bundle.
+	App.prototype.runStartupLayout = function(spec)
+	{
+		var editorUi = this;
+		var isJson = mxUtils.trim(spec).charAt(0) == '[';
+		var list = null;
+
+		if (isJson)
+		{
+			try
+			{
+				list = JSON.parse(spec);
+			}
+			catch (e)
+			{
+				this.handleError(e);
+				return;
+			}
+		}
+
+		// The ELK bundle may still be loading when a layout is requested on the
+		// command line — wait for it before running.
+		this.whenScriptReady(function()
+		{
+			return typeof ElkLayout !== 'undefined' && ElkLayout.MENU_PRESETS != null;
+		}, function()
+		{
+			try
+			{
+				if (list != null)
+				{
+					// Same path as the custom layout dialog's Apply (sequence +
+					// options), minus the selection scoping (lay out the whole page).
+					editorUi.executeLayouts(editorUi.editor.graph.createLayouts(list));
+				}
+				else if (ElkLayout.MENU_PRESETS[spec] != null)
+				{
+					var preset = ElkLayout.MENU_PRESETS[spec];
+					ElkLayout.run(editorUi, preset.algorithm, preset.options, ElkLayout.CANONICAL_EDGE);
+				}
+				else
+				{
+					editorUi.handleError(new Error('Unknown layout: ' + spec));
+				}
+			}
+			catch (e)
+			{
+				editorUi.handleError(e);
+			}
+		}, function()
+		{
+			editorUi.handleError(new Error(mxResources.get('serviceUnavailableOrBlocked')));
+		});
+	};
 
 	var origFileLoaded = EditorUi.prototype.fileLoaded;
 	
@@ -1236,6 +1338,7 @@ mxStencilRegistry.allowEval = false;
 			filters: [
 				{ name: 'draw.io Diagrams', extensions: ['drawio', 'xml', 'png', 'svg', 'html'] },
         	    { name: 'VSDX Documents', extensions: ['vsdx'] },
+        	    { name: 'Mermaid', extensions: ['mmd', 'mermaid'] },
         	    { name: 'All Files', extensions: ['*'] }
 			],
 			properties: ['openFile']
@@ -1297,6 +1400,7 @@ mxStencilRegistry.allowEval = false;
 		var index = path.lastIndexOf('.png');
 		var isPng = index > -1 && index == path.length - 4;
 		var isVsdx = /\.vsdx$/i.test(path) || /\.vssx$/i.test(path);
+		var isMermaid = /\.mmd$/i.test(path) || /\.mermaid$/i.test(path);
 		var encoding = isVsdx? null : ((isPng || /\.pdf$/i.test(path)) ? 'base64' : 'utf-8');
 		var fileEntry = new Object(), stat = null;
 		fileEntry.path = path;
@@ -1387,6 +1491,49 @@ mxStencilRegistry.allowEval = false;
 					checkDrafts();
 				}), null, name);
 				
+				return;
+			}
+			else if (isMermaid)
+			{
+				// Mermaid files are converted to a diagram and opened as a new,
+				// unsaved .drawio file (the Mermaid source is preserved on the
+				// resulting group for re-editing). Mirrors the VSDX/PDF import path.
+				var name = fileEntry.name;
+				var dot = name.lastIndexOf('.');
+				name = (dot >= 0 ? name.substring(0, dot) : name) + '.drawio';
+
+				// The Mermaid bundle loads asynchronously during startup, so a
+				// .mmd/.mermaid file passed on the command line can arrive before
+				// it is ready — wait for it before parsing.
+				this.whenScriptReady(EditorUi.isMermaidSupported, mxUtils.bind(this, function()
+				{
+					this.parseMermaidDiagram(data, null, mxUtils.bind(this, function(mermaidXml)
+					{
+						// normalize:true shifts the wrapped content so the group's
+						// padded bounds start at (0,0) — i.e. the diagram is inset
+						// from the page origin by groupPadding instead of sitting
+						// flush at (0,0) with the padding spilling into negative space.
+						fn(null, mxMermaidToDrawio.wrapGroup(mermaidXml, data, null, {normalize: true}), null, name, false);
+
+						// Mermaid files carry no stored view, so the default scroll
+						// can land at an arbitrary edge (e.g. the bottom of a tall
+						// flowchart). Apply the standard fit-on-load once the diagram
+						// is in place.
+						var ui = this;
+						window.setTimeout(function() { ui.fitInitialView(); }, 0);
+
+						checkDrafts();
+					}), mxUtils.bind(this, function(e)
+					{
+						fnErr(e);
+						checkDrafts();
+					}));
+				}), mxUtils.bind(this, function()
+				{
+					fnErr(new Error(mxResources.get('serviceUnavailableOrBlocked')));
+					checkDrafts();
+				}));
+
 				return;
 			}
 			else if (/\.pdf$/i.test(path))
@@ -1502,6 +1649,37 @@ mxStencilRegistry.allowEval = false;
 	LocalFile.prototype.copyFile = function(success, error)
 	{
 		this.saveAs(this.ui.getCopyFilename(this), success, error);
+	};
+
+	// Best-effort recovery source: the on-disk .bkp backup (last good save before
+	// the most recent overwrite). Returns a lossless prior-version candidate or
+	// null. See EditorUi.getRecoveryData / DrawioFile.getRecoveryVersion.
+	LocalFile.prototype.getRecoveryVersion = function(success, error)
+	{
+		if (this.fileObject == null || this.fileObject.path == null)
+		{
+			success(null);
+			return;
+		}
+
+		electron.request({action: 'getBkpFile', fileObject: {path: this.fileObject.path}},
+			mxUtils.bind(this, function(bkp)
+			{
+				if (bkp != null && bkp.data != null && this.ui.isFileDataLoadable(bkp.data))
+				{
+					success({type: 'backup',
+						label: mxResources.get('restoreBackupCopy'),
+						description: mxResources.get('recoveryVersionDesc'),
+						data: bkp.data, date: bkp.modified, lossy: false});
+				}
+				else
+				{
+					success(null);
+				}
+			}), mxUtils.bind(this, function()
+			{
+				success(null);
+			}));
 	};
 	
 	/**

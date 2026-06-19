@@ -351,14 +351,18 @@ function mxRackNeatPatch(bounds, fill, stroke, strokewidth)
 */
 mxUtils.extend(mxRackNeatPatch, mxShape);
 
-mxRackNeatPatch.prototype.cst = 
+mxRackNeatPatch.prototype.cst =
 {
 		SHAPE_RACK_NEAT_PATCH : 'mxgraph.rackGeneral.neatPatch'
 };
 
+mxRackNeatPatch.prototype.customProperties = [
+	{name: 'bodyColor', dispName: 'Body Color', defVal: '#666666', type: 'color', primary:true}
+];
+
 /**
 * Function: paintVertexShape
-* 
+*
 * Paints the vertex shape.
 */
 mxRackNeatPatch.prototype.paintVertexShape = function(c, x, y, w, h)
@@ -371,7 +375,7 @@ mxRackNeatPatch.prototype.paintVertexShape = function(c, x, y, w, h)
 
 mxRackNeatPatch.prototype.background = function(c, w, h)
 {
-	c.setFillColor('#666666');
+	c.setFillColor(mxUtils.getValue(this.style, 'bodyColor', '#666666'));
 	c.rect(0, 0, w, h);
 	c.fillAndStroke();
 };
@@ -1473,14 +1477,18 @@ function mxRackChannelBase(bounds, fill, stroke, strokewidth)
  */
 mxUtils.extend(mxRackChannelBase, mxShape);
 
-mxRackChannelBase.prototype.cst = 
+mxRackChannelBase.prototype.cst =
 {
 		SHAPE_RACK_CHANNEL_BASE : 'mxgraph.rackGeneral.channelBase'
 };
 
+mxRackChannelBase.prototype.customProperties = [
+	{name: 'footColor', dispName: 'Foot Color', defVal: '#000000', type: 'color', primary:true}
+];
+
 /**
  * Function: paintVertexShape
- * 
+ *
  * Paints the vertex shape.
  */
 mxRackChannelBase.prototype.paintVertexShape = function(c, x, y, w, h)
@@ -1506,7 +1514,7 @@ mxRackChannelBase.prototype.background = function(c, w, h)
 
 mxRackChannelBase.prototype.foreground = function(c, w, h)
 {
-	c.setFillColor('#000000');
+	c.setFillColor(mxUtils.getValue(this.style, 'footColor', '#000000'));
 	c.rect(10, h - 15, 5, 15);
 	c.fillAndStroke();
 	c.rect(w - 15, h - 15, 5, 15);

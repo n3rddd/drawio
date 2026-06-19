@@ -1167,22 +1167,27 @@ var CreateGraphDialog = function(editorUi, title, type)
 		btns.style.marginTop = '14px';
 		btns.style.flexShrink = '0';
 
+		// Same shared confirm dialog as the AnimationDialog and file close:
+		// when the user has added cells since the dialog opened, prompt with
+		// "All changes will be lost!" + [Discard Changes] / [Cancel (default)].
+		// Without dirty state, just close immediately.
 		var cancelBtn = mxUtils.button(mxResources.get('close'), function()
 		{
 			var currentCount = graph.getModel().getChildCount(
 				graph.getDefaultParent());
 
-			if (currentCount > initialCellCount)
-			{
-				editorUi.confirm(mxResources.get('areYouSure'), function()
-				{
-					editorUi.hideDialog();
-				});
-			}
-			else
+			if (currentCount <= initialCellCount)
 			{
 				editorUi.hideDialog();
+				return;
 			}
+
+			// ConfirmDialog hides itself first; the primary "Cancel" then
+			// keeps this dialog open, "Discard Changes" closes it.
+			editorUi.confirm(mxResources.get('allChangesLost'), null, function()
+			{
+				editorUi.hideDialog();
+			}, mxResources.get('cancel'), mxResources.get('discardChanges'));
 		});
 
 		cancelBtn.className = 'geBtn';
@@ -1852,7 +1857,7 @@ var ParseDialog = function(editorUi, title, defaultType)
 				}
 			}
 		}
-		else if (type == 'mermaid' || type == 'mermaid2drawio')
+		else if (type == 'mermaid')
 		{
 			if (editorUi.spinner.spin(document.body, mxResources.get('inserting')))
 			{
@@ -1860,16 +1865,26 @@ var ParseDialog = function(editorUi, title, defaultType)
 				{
 					editorUi.spinner.stop();
 					var graph = editorUi.editor.graph;
-					graph.setSelectionCells(
-						editorUi.importXml(xml,
-						Math.max(insertPoint.x, 20),
-						Math.max(insertPoint.y, 20),
-						true, null, null, true));
+					graph.getModel().beginUpdate();
+					try
+					{
+						var inserted = editorUi.importXml(
+							mxMermaidToDrawio.wrapGroup(xml, text, null),
+							Math.max(insertPoint.x, 20),
+							Math.max(insertPoint.y, 20),
+							true, null, null, true);
+						graph.setSelectionCells(inserted);
+					}
+					finally
+					{
+						graph.getModel().endUpdate();
+					}
+
 					graph.scrollCellToVisible(graph.getSelectionCell());
 				}), mxUtils.bind(this, function(e)
 				{
 					editorUi.handleError(e);
-				}), null, type == 'mermaid2drawio');
+				}));
 			}
 		}
 		else if (type == 'table')
@@ -2253,26 +2268,13 @@ var ParseDialog = function(editorUi, title, defaultType)
 		tableOption.setAttribute('selected', 'selected');
 	}
 
-	var mermaidOption = document.createElement('option');
-	mermaidOption.setAttribute('value', 'mermaid');
-	mxUtils.write(mermaidOption, mxResources.get('image'));
-
 	if (defaultType == 'mermaid')
 	{
-		if (typeof mxMermaidToDrawio !== 'undefined')
-		{
-			var mermaid2drawioOption = document.createElement('option');
-			mermaid2drawioOption.setAttribute('value', 'mermaid2drawio');
-			mermaid2drawioOption.setAttribute('selected', 'selected');
-			mxUtils.write(mermaid2drawioOption, mxResources.get('diagram'));
-			typeSelect.appendChild(mermaid2drawioOption);
-		}
-		else
-		{
-			typeSelect.style.display = 'none';
-		}
-		
+		var mermaidOption = document.createElement('option');
+		mermaidOption.setAttribute('value', 'mermaid');
+		mermaidOption.setAttribute('selected', 'selected');
 		typeSelect.appendChild(mermaidOption);
+		typeSelect.style.display = 'none';
 	}
 
 	var diagramOption = document.createElement('option');
@@ -2335,7 +2337,7 @@ var ParseDialog = function(editorUi, title, defaultType)
 			return 'Person\n-name: String\n-birthDate: Date\n--\n+getName(): String\n+setName(String): void\n+isBirthday(): boolean\n\n' +
 				'Address\n-street: String\n-city: String\n-state: String';
 		}
-		else if (typeSelect.value == 'mermaid' || typeSelect.value == 'mermaid2drawio')
+		else if (typeSelect.value == 'mermaid')
 		{
 			return 'graph TD;\n  A-->B;\n  A-->C;\n  B-->D;\n  C-->D;';
 		}
@@ -2425,10 +2427,10 @@ var ParseDialog = function(editorUi, title, defaultType)
 	{
 		buttons.appendChild(editorUi.createHelpIcon(
 			(defaultType == 'mermaid') ?
-				'https://mermaid.js.org/intro/' :
+				'https://github.com/jgraph/drawio/discussions/5643' :
 				'https://plantuml.com/'));
 	}
-	
+
 	buttons.appendChild(typeSelect);
 	
 	mxEvent.addListener(typeSelect, 'change', function()
@@ -3317,7 +3319,7 @@ var NewDialog = function(editorUi, compact, showName, callback, createOnly, canc
 					magnifyGenerate.style.visibility = 'hidden';
 					editorUi.handleError(e);
 				}
-			}), true);
+			}));
 		}
 		else if (lastAiTitle != null)
 		{
@@ -3632,8 +3634,7 @@ var NewDialog = function(editorUi, compact, showName, callback, createOnly, canc
 	if (Editor.enableAi &&
 		editorUi.isExternalDataComms() &&
 		editorUi.getServiceName() == 'draw.io' &&
-		typeof mxMermaidToDrawio !== 'undefined' &&
-		window.isMermaidEnabled)
+		EditorUi.isMermaidSupported())
 	{
 		categories['basic'].push({title: 'generate', type: 'generative'});
 	}
@@ -5916,6 +5917,19 @@ var LinkDialog = function(editorUi, initialValue, btnLabel, fn, showPages, showN
 	pageRadio.setAttribute('type', 'radio');
 	pageRadio.setAttribute('name', 'geLinkDialogOption');
 
+	// Third option: a custom action encoded as a data:action/json,... URI.
+	// Currently the only editable action kind is "animation"; the picker is
+	// shaped to grow (toggle, highlight, etc. can plug in later).
+	var actionRadio = document.createElement('input');
+	actionRadio.setAttribute('value', 'action');
+	actionRadio.setAttribute('type', 'radio');
+	actionRadio.setAttribute('name', 'geLinkDialogOption');
+
+	// Holds the current encoded action URL (data:action/json,...). Updated
+	// when the user finishes editing via CustomActionDialog.
+	var actionValue = (initialValue != null &&
+		initialValue.substring(0, 17) == 'data:action/json,') ? initialValue : null;
+
 	var linkInput = document.createElement('input');
 	linkInput.setAttribute('placeholder', mxResources.get('dragUrlsHere'));
 	linkInput.setAttribute('type', 'text');
@@ -5962,7 +5976,12 @@ var LinkDialog = function(editorUi, initialValue, btnLabel, fn, showPages, showN
 
 	if (showPages && editorUi.pages != null)
 	{
-		if (initialValue != null && Graph.isPageLink(initialValue))
+		if (actionValue != null)
+		{
+			actionRadio.setAttribute('checked', 'checked');
+			actionRadio.defaultChecked = true;
+		}
+		else if (initialValue != null && Graph.isPageLink(initialValue))
 		{
 			pageRadio.setAttribute('checked', 'checked');
 			pageRadio.defaultChecked = true;
@@ -6041,6 +6060,122 @@ var LinkDialog = function(editorUi, initialValue, btnLabel, fn, showPages, showN
 		pageRow.appendChild(pageRadio);
 		pageRow.appendChild(pageSelect);
 		linkSection.appendChild(pageRow);
+
+		// Action row — third option. Shows a summary of the current action
+		// and an "Edit…" button that opens the CustomActionDialog.
+		var actionRow = document.createElement('div');
+		actionRow.className = 'geDialogCheckRow';
+		actionRow.style.marginTop = '6px';
+		actionRow.appendChild(actionRadio);
+
+		var actionSummary = document.createElement('span');
+		// line-height keeps descenders (g, y, p) from being cropped by the
+		// overflow:hidden that drives the horizontal ellipsis.
+		actionSummary.style.cssText = 'flex:1;min-width:0;font-size:13px;' +
+			'line-height:1.5;' +
+			'color:light-dark(#1d1d1f,#e0e0e0);' +
+			'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;' +
+			'margin-left:8px';
+
+		// Button label flips between Insert (no action yet) and Edit
+		// (an action is configured) so we can drop the dedicated
+		// noActionYet resource — the empty state is conveyed by the
+		// label "Action" + the "Insert" affordance on the button.
+		var editActionBtn = mxUtils.button('', function()
+		{
+			actionRadio.checked = true;
+
+			// editCustomAction hides the LinkDialog modal first, then opens
+			// a non-modal CustomActionDialog. Once the user saves there, we
+			// go directly through fn() to write the link onto the cell —
+			// the LinkDialog is already gone so we can't round-trip back
+			// through its OK button.
+			LinkDialog.editCustomAction(editorUi, actionValue, function(newValue)
+			{
+				actionValue = newValue;
+				fn(newValue, LinkDialog.selectedDocs,
+					(newWindowCheckbox.checked) ? linkTarget : null);
+			});
+		});
+		editActionBtn.className = 'geBtn';
+
+		var updateActionSummary = function()
+		{
+			actionSummary.textContent = '';
+
+			if (actionValue == null)
+			{
+				mxUtils.write(actionSummary,
+					mxResources.get('action', null, 'Action'));
+				editActionBtn.textContent = mxResources.get('insert', null, 'Insert');
+				return;
+			}
+
+			editActionBtn.textContent = mxResources.get('edit', null, 'Edit');
+
+			try
+			{
+				var json = JSON.parse(actionValue.substring(17));
+				var label;
+
+				// Prefer the user's title — it's set explicitly in the
+				// custom-action dialog and tends to be more descriptive
+				// than any auto-generated summary.
+				if (typeof json.title == 'string' && json.title.trim() != '')
+				{
+					label = json.title.trim();
+				}
+				else
+				{
+					var n = (json.actions != null) ? json.actions.length : 0;
+					var first = (n > 0) ? Object.keys(json.actions[0])[0] : '';
+
+					// "Effects (3 steps)" fallback — labels a cell-link
+					// custom action whose payload is `{animation:{steps:[…]}}`.
+					if (first == 'animation' && json.actions[0].animation.steps != null)
+					{
+						var sc = json.actions[0].animation.steps.length;
+						var name = mxResources.get('effects', null, 'Effects');
+						label = name + ' (' + sc + ')';
+					}
+					else if (first != '')
+					{
+						// Resolve the action key (e.g. "fadeIn") to its
+						// human-readable, capitalized, localized label
+						// via the schema catalogue ("Fade In"). Falls
+						// back to the raw key only if the schema is
+						// unknown for some reason. `schema.labelKey`
+						// overrides the default key→resource lookup
+						// (used by viewbox → `view`).
+						var schema = (CustomActionDialog != null) ?
+							CustomActionDialog.SCHEMAS[first] : null;
+						var fallback = (schema != null) ? schema.label : first;
+						var resKey = (schema != null && schema.labelKey) ?
+							schema.labelKey : first;
+						label = mxResources.get(resKey, null, fallback);
+					}
+					else
+					{
+						label = mxResources.get('action', null, 'Action');
+					}
+				}
+
+				mxUtils.write(actionSummary, label);
+			}
+			catch (e)
+			{
+				mxUtils.write(actionSummary, '(' +
+					mxResources.get('invalid', null, 'invalid') + ')');
+			}
+		};
+
+		updateActionSummary();
+		actionRow.appendChild(actionSummary);
+
+		editActionBtn.style.marginLeft = '8px';
+		actionRow.appendChild(editActionBtn);
+
+		linkSection.appendChild(actionRow);
 	}
 	else
 	{
@@ -6058,8 +6193,23 @@ var LinkDialog = function(editorUi, initialValue, btnLabel, fn, showPages, showN
 	var mainBtn = mxUtils.button(btnLabel, function()
 	{
 		editorUi.hideDialog();
-		var value = (pageRadio.checked) ? ((pageSelect.value !== 'pageNotFound') ?
-			pageSelect.value : initialValue) : linkInput.value;
+
+		var value;
+
+		if (actionRadio.checked)
+		{
+			value = (actionValue != null) ? actionValue : initialValue;
+		}
+		else if (pageRadio.checked)
+		{
+			value = (pageSelect.value !== 'pageNotFound') ?
+				pageSelect.value : initialValue;
+		}
+		else
+		{
+			value = linkInput.value;
+		}
+
 		fn(value, LinkDialog.selectedDocs, (newWindowCheckbox.checked) ? linkTarget : null);
 	});
 	mainBtn.style.verticalAlign = 'middle';
@@ -6373,6 +6523,1460 @@ var LinkDialog = function(editorUi, initialValue, btnLabel, fn, showPages, showN
 
 	this.urlInput = linkInput;
 	this.container = div;
+};
+
+/**
+ * Static helper used by the LinkDialog's "Action" row. Closes the (modal)
+ * LinkDialog and opens a CustomActionDialog (non-modal mxWindow) so the
+ * user can freely select cells in the canvas while editing the action.
+ *
+ * The CustomActionDialog calls `onSave(newValue)` with a fully-encoded
+ * `data:action/json,...` URL when the user clicks Save. If the user
+ * cancels (closes without saving), nothing happens — the cell keeps
+ * whatever link it had before Edit Link was opened.
+ */
+LinkDialog.editCustomAction = function(editorUi, currentValue, onSave)
+{
+	editorUi.hideDialog();
+
+	// Reuse an already-open action editor instead of stacking a duplicate.
+	// The reference is cleared on close (below), so a fresh Edit later opens
+	// a new dialog bound to the current cell.
+	if (editorUi.actionWindow != null && editorUi.actionWindow.window != null &&
+		editorUi.actionWindow.window.isVisible())
+	{
+		editorUi.actionWindow.window.setVisible(true);
+		editorUi.actionWindow.window.activate();
+		return;
+	}
+
+	editorUi.actionWindow = new CustomActionDialog(editorUi, currentValue, onSave);
+	editorUi.actionWindow.window.addListener('hide', function()
+	{
+		editorUi.actionWindow = null;
+	});
+};
+
+/**
+ * Inline SVG icons used by the selector chips. Single-stroke pictograms
+ * sized to render at 14×14 px against the chip's hairline border. The
+ * `currentColor` fill picks up the surrounding text color, so the same
+ * markup works in light and dark mode.
+ */
+// End-user manual for the animation / custom-action editors —
+// "Animations and Custom Actions — End-User Manual" in the drawio
+// repo's General discussions.
+var ANIMATION_HELP_URL =
+	'https://github.com/jgraph/drawio/discussions/5588';
+
+var SELECTOR_ICONS = {
+	// Down-arrow into a tray — "use the current canvas selection"
+	arrowDown: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" ' +
+		'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+		'stroke-linejoin="round" aria-hidden="true">' +
+		'<path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M3 13h10"/></svg>',
+	// Crosshair / target — "show these cells on canvas"
+	target: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" ' +
+		'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+		'stroke-linejoin="round" aria-hidden="true">' +
+		'<circle cx="8" cy="8" r="5"/><circle cx="8" cy="8" r="1.5" ' +
+		'fill="currentColor" stroke="none"/><path d="M8 1.5v2M8 12.5v2M' +
+		'1.5 8h2M12.5 8h2"/></svg>',
+	// Asterisk / wildcard — "match all cells"
+	asterisk: '<svg viewBox="0 0 16 16" width="14" height="14" fill="none" ' +
+		'stroke="currentColor" stroke-width="1.6" stroke-linecap="round" ' +
+		'aria-hidden="true">' +
+		'<path d="M8 3.5v9M4 5.5l8 5M4 10.5l8-5"/></svg>'
+};
+
+/**
+ * Polished selector styles (cell-list chip, tag pills, tag picker popover).
+ * Installed once on first use, then shared by every dialog that calls
+ * `createCellListField` / `createTagListField`.
+ */
+function installCustomActionStyles()
+{
+	if (installCustomActionStyles._done) return;
+	installCustomActionStyles._done = true;
+
+	var css = [
+		// Field (label + chip + buttons grouped together)
+		'.geSelField{display:inline-flex;align-items:center;gap:6px;',
+			'font:12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,',
+			'Helvetica,Arial,sans-serif;-webkit-font-smoothing:antialiased}',
+		'.geSelFieldLabel{color:light-dark(#6e6e73,#9a9aa0);',
+			'font-weight:500;letter-spacing:0.01em}',
+
+		// Chip (the count pill itself)
+		'.geSelChip{display:inline-flex;align-items:center;gap:4px;',
+			'min-height:24px;padding:2px 10px;border-radius:999px;',
+			'border:1px solid light-dark(#d2d2d7,#48484a);',
+			'background:light-dark(#fafafa,#2c2c2e);',
+			'color:light-dark(#1d1d1f,#e5e5e7);font:inherit;font-weight:500;',
+			// flex:0 0 auto so the chip never shrinks below its content
+			// — when the dialog narrows the row overflows (clipped by
+			// row.overflow:hidden) from the right edge instead of the
+			// numeric inputs sliding into the chip's space.
+			'flex:0 0 auto;max-width:100%;',
+			'white-space:nowrap;user-select:none;',
+			'transition:background-color .15s,',
+			'border-color .15s,box-shadow .15s}',
+		'.geSelChipReadOnly{cursor:default}',
+		// Tag chip is clickable (opens picker) so it gets hover affordance
+		'button.geSelChip,a.geSelChip{cursor:pointer}',
+		'button.geSelChip:hover,a.geSelChip:hover{',
+			'background:light-dark(#f0f0f2,#3a3a3c);',
+			'border-color:light-dark(#b9b9be,#5a5a5e)}',
+		'button.geSelChip:focus-visible{outline:2px solid ',
+			'light-dark(#0071e3,#0a84ff);outline-offset:1px}',
+		'.geSelChipEmpty{color:light-dark(#8e8e93,#7a7a7e);',
+			'border-style:dashed;background:transparent}',
+		'.geSelChipAll{background:light-dark(#e8f0fe,#10325f);',
+			'border-color:light-dark(#a3c4f8,#2a5aa8);',
+			'color:light-dark(#0a4bb0,#7eb1ff)}',
+		'.geSelChipTags{padding:2px 6px;gap:3px}',
+		// Disclosure caret on chips that open a popover
+		'.geSelChipExpandable::after{content:"";display:inline-block;',
+			'width:5px;height:5px;margin-left:6px;',
+			'border:solid currentColor;border-width:0 1.4px 1.4px 0;',
+			'transform:translateY(-2px) rotate(45deg);opacity:.55}',
+
+		// Tag pill (inside chip and inside picker)
+		'.geTagPill{display:inline-block;max-width:90px;padding:1px 8px;',
+			'border-radius:999px;background:light-dark(#e5e5ea,#48484a);',
+			'color:light-dark(#1d1d1f,#e5e5e7);',
+			'font-size:11px;font-weight:500;line-height:1.4;',
+			'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;',
+			'vertical-align:middle}',
+		'.geTagPillMore{display:inline-block;padding:1px 6px;',
+			'border-radius:999px;background:transparent;',
+			'color:light-dark(#6e6e73,#9a9aa0);font-size:11px;font-weight:500}',
+
+		// Icon-only inline buttons (Use Selection / Show on Canvas)
+		'.geSelIconBtn{display:inline-flex;align-items:center;justify-content:center;',
+			'width:24px;height:24px;padding:0;border-radius:6px;',
+			'border:1px solid light-dark(#d2d2d7,#48484a);',
+			'background:light-dark(#ffffff,#1c1c1e);',
+			'color:light-dark(#3a3a3f,#cfcfd3);cursor:pointer;',
+			'transition:background-color .15s,border-color .15s,color .15s}',
+		'.geSelIconBtn:hover{background:light-dark(#f5f5f7,#2c2c2e);',
+			'border-color:light-dark(#b9b9be,#5a5a5e);',
+			'color:light-dark(#0071e3,#0a84ff)}',
+		'.geSelIconBtn:focus-visible{outline:2px solid ',
+			'light-dark(#0071e3,#0a84ff);outline-offset:1px}',
+		'.geSelIconBtn:active{background:light-dark(#e5e5ea,#3a3a3c)}',
+		'.geSelIconBtnActive{background:light-dark(#0071e3,#0a84ff);',
+			'border-color:light-dark(#0071e3,#0a84ff);',
+			'color:#ffffff}',
+		'.geSelIconBtnActive:hover{background:light-dark(#0062c4,#1a90ff);',
+			'border-color:light-dark(#0062c4,#1a90ff);',
+			'color:#ffffff}',
+		'.geSelIconBtn svg{display:block}',
+
+		// Tag picker popover — matches the inline-toolbar popover style
+		// (12px radius, soft shadow, bouncy scale-in animation with
+		// transform-origin pinned to the arrow tip).
+		'.geTagPicker{position:fixed;z-index:10000;min-width:220px;max-width:300px;',
+			'background:light-dark(#ffffff,#1c1c1e);',
+			'border:1px solid light-dark(#d0d0d0,#505050);border-radius:12px;',
+			'box-shadow:0 4px 16px rgba(0,0,0,0.15);',
+			'font:12px/1.3 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,',
+			'Helvetica,Arial,sans-serif;color:light-dark(#1d1d1f,#e5e5e7);',
+			'opacity:0;transform:scale(0);',
+			'transition:transform .2s cubic-bezier(0.34,1.56,0.64,1),',
+			'opacity .1s ease-out}',
+		'.geTagPickerOpen{opacity:1;transform:scale(1)}',
+		// Arrow notch — CSS triangle outside the popover. Two stacked
+		// triangles give the hairline border without leaving any
+		// rotated-square bleed inside the popover's content area.
+		'.geTagPickerArrow{position:absolute;top:-7px;width:0;height:0;',
+			'border-left:7px solid transparent;border-right:7px solid transparent;',
+			'border-bottom:7px solid light-dark(#d2d2d7,#48484a);',
+			'pointer-events:none}',
+		'.geTagPickerArrow::after{content:"";position:absolute;',
+			'top:1px;left:-6px;width:0;height:0;',
+			'border-left:6px solid transparent;border-right:6px solid transparent;',
+			'border-bottom:6px solid light-dark(#ffffff,#1c1c1e)}',
+		'.geTagPickerArrowBottom{top:auto;bottom:-7px;',
+			'border-bottom:none;',
+			'border-top:7px solid light-dark(#d2d2d7,#48484a)}',
+		'.geTagPickerArrowBottom::after{top:auto;bottom:1px;',
+			'border-bottom:none;',
+			'border-top:6px solid light-dark(#ffffff,#1c1c1e)}',
+		'.geTagPickerHeader{padding:10px 14px 6px;font-weight:600;',
+			'color:light-dark(#1d1d1f,#e5e5e7);font-size:12px;',
+			'letter-spacing:.02em;text-transform:uppercase;opacity:.8}',
+		'.geTagPickerEmpty{padding:14px 18px;',
+			'color:light-dark(#8e8e93,#7a7a7e);font-style:italic;text-align:center}',
+		'.geTagPickerFooter{padding:4px;',
+			'border-top:1px solid light-dark(#e5e5ea,#3a3a3c)}',
+		// AND/OR mode toggle in the tag picker header
+		'.geTagPickerModeBar{display:flex;align-items:center;gap:6px;',
+			'padding:6px 10px 4px}',
+		'.geTagPickerModeLabel{font-size:11px;font-weight:500;',
+			'color:light-dark(#6e6e73,#9a9aa0);margin-right:4px}',
+		'.geTagPickerModeBtn{padding:2px 10px;border-radius:999px;',
+			'font:inherit;font-size:11px;font-weight:500;cursor:pointer;',
+			'border:1px solid light-dark(#d2d2d7,#48484a);',
+			'background:transparent;color:light-dark(#3a3a3f,#cfcfd3);',
+			'transition:background-color .12s,color .12s,border-color .12s}',
+		'.geTagPickerModeBtn:hover{background:light-dark(#f0f0f2,#2c2c2e)}',
+		'.geTagPickerModeBtnActive{background:light-dark(#0071e3,#0a84ff);',
+			'border-color:light-dark(#0071e3,#0a84ff);color:#ffffff}',
+		'.geTagPickerModeBtnActive:hover{',
+			'background:light-dark(#0062c4,#1a90ff);',
+			'border-color:light-dark(#0062c4,#1a90ff)}',
+
+		// Tag cloud — flowing list of clickable pills inside the popover.
+		// max-height caps the list at ~14 rows; anything beyond scrolls.
+		// Tested with 500+ tags — the popover stays bounded and the
+		// rest is reachable via the inner scrollbar.
+		'.geTagPickerCloud{display:flex;flex-wrap:wrap;gap:6px;',
+			'padding:8px 10px 12px;max-height:320px;overflow:auto;',
+			'max-width:320px}',
+		'.geTagCloudPill{display:inline-block;padding:3px 10px;',
+			'border-radius:999px;cursor:pointer;font:inherit;',
+			'font-size:11px;font-weight:500;line-height:1.4;',
+			'background:light-dark(#e5e5ea,#48484a);',
+			'color:light-dark(#3a3a3f,#cfcfd3);',
+			'border:1px solid transparent;white-space:nowrap;',
+			'transition:background-color .12s,color .12s,border-color .12s}',
+		'.geTagCloudPill:hover{background:light-dark(#d5d5da,#5a5a5e)}',
+		'.geTagCloudPillActive{background:light-dark(#d4f0db,#1c4530);',
+			'color:light-dark(#1f7a3e,#86e0a3);',
+			'border-color:light-dark(#a8e0b8,#2d6849)}',
+		'.geTagCloudPillActive:hover{background:light-dark(#c4e8ce,#235c3d)}',
+
+		// Layer picker — vertical list of checkbox rows. Distinct from
+		// the tag cloud (which uses pills) because the user asked for a
+		// classic checkbox list, and because layer names are typically
+		// longer than tag names and wouldn't pack neatly into pills.
+		// max-height caps the list at ~12 rows; anything beyond scrolls.
+		'.geLayerPickerList{display:flex;flex-direction:column;gap:2px;',
+			'padding:6px 6px 10px;max-height:320px;overflow:auto;',
+			'min-width:220px}',
+		'.geLayerPickerRow{display:flex;align-items:center;gap:8px;',
+			'padding:5px 8px;border-radius:6px;cursor:pointer;',
+			'font:inherit;font-size:12px;',
+			'color:light-dark(#1d1d1f,#e5e5e7);',
+			'transition:background-color .1s}',
+		'.geLayerPickerRow:hover{background:light-dark(#f0f0f2,#2c2c2e)}',
+		'.geLayerPickerRow input[type="checkbox"]{margin:0;flex:0 0 auto}',
+		'.geLayerPickerRowLabel{flex:1;white-space:nowrap;',
+			'overflow:hidden;text-overflow:ellipsis}',
+
+		// Destructive picker entry (e.g. "Delete All" at the bottom of
+		// the AnimationDialog picker). Most browsers only honor `color`
+		// on <option> — that's fine, the red text is the cue.
+		'option.geDeleteOpt{color:light-dark(#d70015,#ff453a);font-weight:500}',
+
+		// Inline number inputs (viewbox X/Y/W/H/B, fade delay, opacity,
+		// highlight color/duration/opacity, etc). The class:
+		//   1) Hides the native spinner buttons (they ate ~16-20px of
+		//      declared width on WebKit/Firefox).
+		//   2) Pins width to 60px (flex-basis + width + max-width) so
+		//      the layout algorithm doesn't reserve the input's much
+		//      larger intrinsic content width (~150px from default
+		//      size=20) when distributing space — that was making the
+		//      cells chip shrink past the input's right edge and
+		//      "overlap" visually after clipping.
+		// box-sizing:border-box so padding stays inside the budget.
+		'.geNoSpin{-moz-appearance:textfield;',
+			'flex:0 0 60px;width:60px;max-width:60px;',
+			'box-sizing:border-box}',
+		'.geNoSpin::-webkit-outer-spin-button,',
+		'.geNoSpin::-webkit-inner-spin-button{',
+			'-webkit-appearance:none;margin:0}',
+
+		// Action menu (the cell chip popover)
+		'.geActionMenuList{padding:4px;min-width:180px}',
+		'.geActionMenuItem{display:block;width:100%;padding:6px 12px;',
+			'background:none;border:0;border-radius:6px;text-align:left;',
+			'font:inherit;font-size:13px;cursor:pointer;',
+			'color:light-dark(#1d1d1f,#e5e5e7);',
+			'transition:background-color .1s}',
+		'.geActionMenuItem:hover{background:light-dark(#f0f0f2,#2c2c2e)}',
+		'.geActionMenuItemActive{color:light-dark(#0071e3,#0a84ff);',
+			'font-weight:600}',
+		'.geActionMenuItemDanger{color:light-dark(#d70015,#ff453a)}',
+		'.geActionMenuItemDanger:hover{background:light-dark(#fdf0f0,#3a2020)}',
+		'.geActionMenuItemDisabled{color:light-dark(#aeaeb2,#636366);',
+			'cursor:default;pointer-events:none}',
+		'.geActionMenuSeparator{height:1px;margin:4px 6px;',
+			'background:light-dark(#e5e5ea,#3a3a3c)}',
+
+		// Active step highlight — applied by the animation preview to
+		// the row whose step is currently executing. Subtle blue tint,
+		// no border-shift so the row height stays stable.
+		'.geAnimationStepActive{background:',
+			'light-dark(rgba(0,113,227,.10),rgba(10,132,255,.18))}'
+	].join('');
+
+	var style = document.createElement('style');
+	style.setAttribute('data-source', 'customActionDialog');
+	style.textContent = css;
+	document.head.appendChild(style);
+}
+
+/**
+ * Calls `installResizeHandler` with `EditorUi.windowed` forced true for
+ * the duration of the call. The dock-manager wrap inside
+ * `installResizeHandler` is guarded by that flag, which is only set in
+ * the sketch/minimal UI — without this override the custom-action and
+ * animation dialogs wouldn't snap to viewport edges in the classic UI.
+ *
+ * The multi-corner / multi-edge resize handles are installed globally
+ * by the `mxWindow.prototype.setResizable` override in Editor.js — they
+ * apply to every resizable mxWindow, not just these two dialogs.
+ */
+function installDialogDocking(editorUi, dialog)
+{
+	var prev = EditorUi.windowed;
+	EditorUi.windowed = true;
+	try
+	{
+		editorUi.installResizeHandler(dialog, true);
+	}
+	finally
+	{
+		EditorUi.windowed = prev;
+	}
+}
+
+/**
+ * Stops HTML5 drag events from bubbling out of the given list container.
+ * Row reorder uses native drag-and-drop, and without this the events
+ * reach the mxGraph canvas underneath — which interprets them as a
+ * potential cell drop and highlights the container.
+ */
+function containDragEvents(el)
+{
+	var events = ['dragstart', 'dragenter', 'dragover',
+		'dragleave', 'drop', 'dragend'];
+
+	for (var i = 0; i < events.length; i++)
+	{
+		el.addEventListener(events[i], function(e)
+		{
+			e.stopPropagation();
+		});
+	}
+}
+
+/**
+ * Reusable selector-chip factory. Call `SelectorChips.create(graph,
+ * editorUi)` and use the returned `.cellListField(...)` / `.tagListField(...)`
+ * helpers to render polished, count-only chips with inline "Use Selection"
+ * / "Show on Canvas" actions and a tag picker popover. Both the
+ * CustomActionDialog and the AnimationDialog instantiate one of these
+ * so their cell/tag editing UI stays consistent.
+ */
+var SelectorChips = {};
+
+SelectorChips.create = function(graph, editorUi)
+{
+	installCustomActionStyles();
+
+	// Returns a small icon-only button rendered with an inline SVG.
+	function makeIconButton(iconKey, title, onClick)
+	{
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.title = title;
+		b.className = 'geSelIconBtn';
+		b.innerHTML = SELECTOR_ICONS[iconKey];
+		b.addEventListener('click', function(e)
+		{
+			e.preventDefault();
+			onClick(e);
+		});
+		return b;
+	}
+
+	// Renders a chip that opens a menu popover with the available
+	// actions: Use Selection, All Cells (when wildcard is allowed),
+	// Show on Canvas, Reset. The chip displays a self-describing count
+	// like "5 cells" / "5 Excluded", or just the bare noun when
+	// empty ("cells" / "Excluded") — no separate label needed.
+	// `opts.singularKey` / `opts.pluralKey` pick the noun (defaults
+	// 'cell' / 'cells' — match the app's broader terminology even
+	// though the chip can also seed layers/tags). `opts.allowWildcard`
+	// enables the "All cells" state which preserves the user's
+	// explicit IDs in a stash for non-destructive toggling.
+	function cellListField(label, getValue, setValue, opts)
+	{
+		opts = opts || {};
+		var singularKey = opts.singularKey || 'cell';
+		var pluralKey = opts.pluralKey || 'cells';
+		var singularFallback = opts.singularFallback || 'cell';
+		var pluralFallback = opts.pluralFallback || 'cells';
+		// Empty-state label keeps the call-to-action visible — "select"
+		// reads as a verb prompting the user to pick cells, rather than
+		// the noun "cells" which can look like a column header.
+		var emptyKey = opts.emptyKey || 'select';
+		var emptyFallback = opts.emptyFallback || 'Select';
+
+		var field = document.createElement('div');
+		field.className = 'geSelField';
+
+		if (label)
+		{
+			var lbl = document.createElement('span');
+			lbl.className = 'geSelFieldLabel';
+			mxUtils.write(lbl, label);
+			field.appendChild(lbl);
+		}
+
+		var chip = document.createElement('button');
+		chip.type = 'button';
+		chip.className = 'geSelChip geSelChipExpandable';
+
+		var stashedCells = null;
+
+		var isWildcard = function()
+		{
+			var v = getValue();
+			return Array.isArray(v) && v.length == 1 && v[0] === '*';
+		};
+
+		var hasCells = function()
+		{
+			var v = getValue();
+			return Array.isArray(v) && v.length > 0;
+		};
+
+		var updateChip = function()
+		{
+			var v = getValue();
+			var count = (Array.isArray(v) && !isWildcard()) ? v.length : 0;
+			chip.textContent = '';
+			chip.classList.remove('geSelChipEmpty', 'geSelChipAll');
+			chip.title = '';
+
+			if (isWildcard())
+			{
+				chip.classList.add('geSelChipAll');
+				mxUtils.write(chip, mxResources.get('allCells', null, 'All cells'));
+			}
+			else if (count == 0)
+			{
+				// Empty: call-to-action verb ("Select"), no leading "0"
+				// — invites a click without shouting "you have nothing
+				// here".
+				chip.classList.add('geSelChipEmpty');
+				mxUtils.write(chip,
+					mxResources.get(emptyKey, null, emptyFallback));
+			}
+			else
+			{
+				mxUtils.write(chip, count + ' ' + (count == 1 ?
+					mxResources.get(singularKey, null, singularFallback) :
+					mxResources.get(pluralKey, null, pluralFallback)));
+				chip.title = v.join('\n');
+			}
+		};
+
+		chip.addEventListener('click', function(e)
+		{
+			e.preventDefault();
+
+			// Click-to-toggle: if our popover is already open, close it
+			// instead of reopening. Without this the mousedown-outside
+			// handler closes the existing popover, then the click event
+			// reopens a fresh one — so the popover never goes away.
+			if (openPopover._open != null && openPopover._open.anchor === chip)
+			{
+				openPopover._open.close();
+				return;
+			}
+
+			var items = [];
+
+			items.push({
+				label: mxResources.get('useSelection', null, 'Use selection'),
+				// Function form — re-evaluated when the popover hears a
+				// canvas selection change, so this item enables/disables
+				// live as the user picks cells without closing the menu.
+				disabled: function() { return graph.getSelectionCount() == 0; },
+				onClick: function()
+				{
+					var cells = graph.getSelectionCells();
+					if (cells.length == 0) return;
+					setValue(cells.map(function(c) { return c.id; }));
+					updateChip();
+				}
+			});
+
+			if (opts.allowWildcard)
+			{
+				items.push({
+					label: mxResources.get('allCells', null, 'All cells'),
+					active: isWildcard(),
+					onClick: function()
+					{
+						if (isWildcard())
+						{
+							setValue(stashedCells);
+							stashedCells = null;
+						}
+						else
+						{
+							var v = getValue();
+							stashedCells = Array.isArray(v) ? v.slice() : null;
+							setValue(['*']);
+						}
+						updateChip();
+					}
+				});
+			}
+
+			if (hasCells())
+			{
+				items.push({
+					label: mxResources.get('selectCellsInDiagram',
+					null, 'Select cells in diagram'),
+					onClick: function()
+					{
+						var v = getValue();
+						var cells = [];
+						for (var i = 0; i < v.length; i++)
+						{
+							if (v[i] === '*')
+							{
+								cells = graph.model.getDescendants(
+									graph.model.getRoot());
+								break;
+							}
+							var c = graph.model.getCell(v[i]);
+							if (c != null) cells.push(c);
+						}
+						if (cells.length > 0) graph.setSelectionCells(cells);
+						else graph.clearSelection();
+					}
+				});
+
+				items.push({separator: true});
+
+				items.push({
+					label: mxResources.get('reset', null, 'Reset'),
+					danger: true,
+					onClick: function()
+					{
+						setValue(null);
+						stashedCells = null;
+						updateChip();
+					}
+				});
+			}
+
+			// Caller-provided extras land at the bottom (with a leading
+			// separator unless they bring their own). Used by the cells
+			// chip to host "Exclude selected cells", which writes to a
+			// sibling field on the same selector object.
+			if (Array.isArray(opts.extraMenuItems) && opts.extraMenuItems.length > 0)
+			{
+				if (items.length > 0 && !items[items.length - 1].separator)
+				{
+					items.push({separator: true});
+				}
+				for (var i = 0; i < opts.extraMenuItems.length; i++)
+				{
+					items.push(opts.extraMenuItems[i]);
+				}
+			}
+
+			openMenuPopover(chip, items);
+		});
+
+		field.appendChild(chip);
+
+		updateChip();
+		return field;
+	}
+
+	// Renders a field with a leading label and a clickable chip that
+	// shows the selected tags as inline pills. Clicking opens a popover
+	// with checkboxes for every tag present in the diagram, plus a
+	// freeform "+ Add" input.
+	function tagListField(label, getValue, setValue, opts)
+	{
+		opts = opts || {};
+
+		var field = document.createElement('div');
+		field.className = 'geSelField';
+
+		if (label)
+		{
+			var lbl = document.createElement('span');
+			lbl.className = 'geSelFieldLabel';
+			mxUtils.write(lbl, label);
+			field.appendChild(lbl);
+		}
+
+		var chip = document.createElement('button');
+		chip.type = 'button';
+		chip.className = 'geSelChip geSelChipExpandable';
+
+		var updateChip = function()
+		{
+			var v = getValue();
+			var count = Array.isArray(v) ? v.length : 0;
+			chip.textContent = '';
+			chip.classList.remove('geSelChipEmpty');
+			chip.title = '';
+
+			if (count == 0)
+			{
+				chip.classList.add('geSelChipEmpty');
+				mxUtils.write(chip, mxResources.get('tags', null, 'Tags'));
+			}
+			else
+			{
+				mxUtils.write(chip, count + ' ' + (count == 1 ?
+					mxResources.get('tag', null, 'Tag') :
+					mxResources.get('tags', null, 'Tags')));
+				chip.title = v.join('\n');
+			}
+		};
+
+		chip.addEventListener('click', function(e)
+		{
+			e.preventDefault();
+
+			// Toggle behavior — see the cells chip for the same logic.
+			if (openPopover._open != null && openPopover._open.anchor === chip)
+			{
+				openPopover._open.close();
+				return;
+			}
+
+			openTagPicker(chip, getValue, function(newTags)
+			{
+				setValue(newTags);
+				updateChip();
+			}, opts.getMode, opts.setMode);
+		});
+		field.appendChild(chip);
+
+		updateChip();
+		return field;
+	}
+
+	// Renders a chip that opens the layer picker. Mirrors tagListField,
+	// but uses the layer-list popover (checkbox rows) and resolves the
+	// layer cell name for the tooltip.
+	function layerListField(label, getValue, setValue)
+	{
+		var field = document.createElement('div');
+		field.className = 'geSelField';
+
+		if (label)
+		{
+			var lbl = document.createElement('span');
+			lbl.className = 'geSelFieldLabel';
+			mxUtils.write(lbl, label);
+			field.appendChild(lbl);
+		}
+
+		var chip = document.createElement('button');
+		chip.type = 'button';
+		chip.className = 'geSelChip geSelChipExpandable';
+
+		var updateChip = function()
+		{
+			var v = getValue();
+			var count = Array.isArray(v) ? v.length : 0;
+			chip.textContent = '';
+			chip.classList.remove('geSelChipEmpty');
+			chip.title = '';
+
+			if (count == 0)
+			{
+				chip.classList.add('geSelChipEmpty');
+				mxUtils.write(chip,
+					mxResources.get('layers', null, 'Layers'));
+			}
+			else
+			{
+				mxUtils.write(chip, count + ' ' + (count == 1 ?
+					mxResources.get('layer', null, 'Layer') :
+					mxResources.get('layers', null, 'Layers')));
+
+				// Hover title with resolved layer names — same UX as the
+				// tags chip, which lists tag values on hover.
+				var names = [];
+				var model = graph.getModel();
+				for (var i = 0; i < v.length; i++)
+				{
+					var cell = model.getCell(v[i]);
+					if (cell != null)
+					{
+						var n = graph.convertValueToString(cell);
+						names.push((n != null && n !== '') ? n : v[i]);
+					}
+					else names.push(v[i]);
+				}
+				chip.title = names.join('\n');
+			}
+		};
+
+		chip.addEventListener('click', function(e)
+		{
+			e.preventDefault();
+
+			if (openPopover._open != null && openPopover._open.anchor === chip)
+			{
+				openPopover._open.close();
+				return;
+			}
+
+			openLayerPicker(chip, getValue, function(newLayers)
+			{
+				setValue(newLayers);
+				updateChip();
+			});
+		});
+		field.appendChild(chip);
+
+		updateChip();
+		return field;
+	}
+
+	// Tag-cloud popover: the diagram's existing tags rendered as a wrapped
+	// row of clickable pills. Active (selected) tags are tinted green;
+	// inactive ones are gray. Click toggles. No add-new — the dialog is
+	// for filtering against existing tags, not authoring new ones.
+	function openTagPicker(anchor, getValue, onChange, getMode, setMode)
+	{
+		var current = (Array.isArray(getValue()) ? getValue() : []).slice();
+		var allTags = (typeof graph.getAllTags == 'function') ?
+			graph.getAllTags() : [];
+		// Include user-selected tags that aren't in the diagram (yet) so
+		// they remain visible/toggle-able in the cloud
+		for (var i = 0; i < current.length; i++)
+		{
+			if (allTags.indexOf(current[i]) < 0) allTags.push(current[i]);
+		}
+		allTags.sort();
+
+		var body = document.createElement('div');
+
+		if (allTags.length == 0)
+		{
+			var empty = document.createElement('div');
+			empty.className = 'geTagPickerEmpty';
+			mxUtils.write(empty, mxResources.get('noTagsInDiagram',
+				null, 'No tags in this diagram yet.'));
+			body.appendChild(empty);
+		}
+		else
+		{
+			// AND/OR toggle — only rendered when the caller supplied
+			// getMode/setMode. Sits above the cloud so the user sees the
+			// match rule before picking tags.
+			var mode = (typeof getMode == 'function') ? (getMode() || 'and') : null;
+
+			if (typeof setMode == 'function')
+			{
+				var modeBar = document.createElement('div');
+				modeBar.className = 'geTagPickerModeBar';
+
+				var modeLabel = document.createElement('span');
+				modeLabel.className = 'geTagPickerModeLabel';
+				mxUtils.write(modeLabel,
+					mxResources.get('match', null, 'Match') + ':');
+				modeBar.appendChild(modeLabel);
+
+				var modeAnd = document.createElement('button');
+				modeAnd.type = 'button';
+				modeAnd.className = 'geTagPickerModeBtn';
+				mxUtils.write(modeAnd, mxResources.get('matchAll', null, 'All'));
+				modeAnd.title = mxResources.get('matchAllHint', null,
+					'Match cells that have every selected tag (AND)');
+
+				var modeOr = document.createElement('button');
+				modeOr.type = 'button';
+				modeOr.className = 'geTagPickerModeBtn';
+				mxUtils.write(modeOr, mxResources.get('matchAny', null, 'Any'));
+				modeOr.title = mxResources.get('matchAnyHint', null,
+					'Match cells that have at least one selected tag (OR)');
+
+				var refreshMode = function()
+				{
+					modeAnd.classList.toggle('geTagPickerModeBtnActive',
+						mode === 'and');
+					modeOr.classList.toggle('geTagPickerModeBtnActive',
+						mode === 'or');
+				};
+				refreshMode();
+
+				modeAnd.addEventListener('click', function(e)
+				{
+					e.preventDefault();
+					mode = 'and';
+					setMode('and');
+					refreshMode();
+				});
+				modeOr.addEventListener('click', function(e)
+				{
+					e.preventDefault();
+					mode = 'or';
+					setMode('or');
+					refreshMode();
+				});
+
+				modeBar.appendChild(modeAnd);
+				modeBar.appendChild(modeOr);
+				body.appendChild(modeBar);
+			}
+
+			var cloud = document.createElement('div');
+			cloud.className = 'geTagPickerCloud';
+
+			var pillRefreshers = [];
+
+			for (var i = 0; i < allTags.length; i++)
+			{
+				(function(tag)
+				{
+					var pill = document.createElement('button');
+					pill.type = 'button';
+					pill.className = 'geTagCloudPill';
+					pill.title = tag;
+					pill.textContent = tag;
+
+					var refresh = function()
+					{
+						pill.classList.toggle('geTagCloudPillActive',
+							current.indexOf(tag) >= 0);
+					};
+
+					refresh();
+					pillRefreshers.push(refresh);
+
+					pill.addEventListener('click', function(e)
+					{
+						e.preventDefault();
+						var idx = current.indexOf(tag);
+						if (idx >= 0) current.splice(idx, 1);
+						else current.push(tag);
+						onChange(current.slice());
+						refresh();
+						refreshFooter();
+					});
+					cloud.appendChild(pill);
+				})(allTags[i]);
+			}
+
+			body.appendChild(cloud);
+
+			// Footer: "Select cells" (only when any tags are active) and
+			// "Reset" (clears the whole selection).
+			var footer = document.createElement('div');
+			footer.className = 'geTagPickerFooter';
+
+			var selectBtn = document.createElement('button');
+			selectBtn.type = 'button';
+			selectBtn.className = 'geActionMenuItem';
+			mxUtils.write(selectBtn,
+				mxResources.get('selectCellsInDiagram',
+					null, 'Select cells in diagram'));
+			selectBtn.addEventListener('click', function(e)
+			{
+				e.preventDefault();
+				if (current.length == 0) return;
+				var cells = (typeof graph.getCellsForTags == 'function') ?
+					graph.getCellsForTags(current, null, null, true, mode) : [];
+				if (cells.length > 0) graph.setSelectionCells(cells);
+				else graph.clearSelection();
+			});
+			footer.appendChild(selectBtn);
+
+			var resetBtn = document.createElement('button');
+			resetBtn.type = 'button';
+			resetBtn.className = 'geActionMenuItem geActionMenuItemDanger';
+			mxUtils.write(resetBtn, mxResources.get('reset', null, 'Reset'));
+			resetBtn.addEventListener('click', function(e)
+			{
+				e.preventDefault();
+				current = [];
+				onChange([]);
+				for (var i = 0; i < pillRefreshers.length; i++)
+				{
+					pillRefreshers[i]();
+				}
+				refreshFooter();
+			});
+			footer.appendChild(resetBtn);
+			body.appendChild(footer);
+
+			// Dim Select cells / Reset when nothing's selected — they're
+			// no-ops at that point but stay visible so the user can
+			// discover the actions even before toggling any tag.
+			var refreshFooter = function()
+			{
+				var empty = current.length == 0;
+				selectBtn.classList.toggle('geActionMenuItemDisabled', empty);
+				selectBtn.disabled = empty;
+				resetBtn.classList.toggle('geActionMenuItemDisabled', empty);
+				resetBtn.disabled = empty;
+			};
+			refreshFooter();
+		}
+
+		openPopover(anchor, mxResources.get('tags', null, 'Tags'), body);
+	}
+
+	// Returns the layers (top-level children of the model root) along
+	// with a display name. Renamed layers store the name as the cell
+	// value; the first unnamed layer falls back to "Background" to
+	// match the LayersWindow convention.
+	function getAllLayers()
+	{
+		var model = graph.getModel();
+		var root = model.getRoot();
+		var count = model.getChildCount(root);
+		var layers = [];
+
+		for (var i = 0; i < count; i++)
+		{
+			var layer = model.getChildAt(root, i);
+			if (layer == null) continue;
+			var name = graph.convertValueToString(layer);
+			if (name == null || name === '')
+			{
+				name = (i == 0) ? mxResources.get('background',
+					null, 'Background') :
+					mxResources.get('untitledLayer',
+					null, 'Untitled Layer');
+			}
+			layers.push({id: layer.id, name: name, cell: layer});
+		}
+
+		return layers;
+	}
+
+	// Layer picker popover: vertical list of checkbox rows for every
+	// layer (top-level child of the model root). User toggles rows;
+	// `onChange` fires on every flip with the new array of layer IDs.
+	// Callers are expected to gate entry on "model has at least one
+	// layer" (the cells-chip menu's "Select layers" item is disabled
+	// when `getChildCount(getRoot()) == 0`) — this function does not
+	// handle the empty case.
+	function openLayerPicker(anchor, getValue, onChange)
+	{
+		var current = (Array.isArray(getValue()) ? getValue() : []).slice();
+		var allLayers = getAllLayers();
+
+		var body = document.createElement('div');
+
+		var list = document.createElement('div');
+		list.className = 'geLayerPickerList';
+
+		var refreshers = [];
+
+		for (var i = 0; i < allLayers.length; i++)
+		{
+			(function(layer)
+			{
+				var row = document.createElement('label');
+				row.className = 'geLayerPickerRow';
+				row.title = layer.name;
+
+				var cb = document.createElement('input');
+				cb.type = 'checkbox';
+				cb.checked = current.indexOf(layer.id) >= 0;
+				row.appendChild(cb);
+
+				var lbl = document.createElement('span');
+				lbl.className = 'geLayerPickerRowLabel';
+				mxUtils.write(lbl, layer.name);
+				row.appendChild(lbl);
+
+				var refresh = function()
+				{
+					cb.checked = current.indexOf(layer.id) >= 0;
+				};
+				refreshers.push(refresh);
+
+				cb.addEventListener('change', function()
+				{
+					var idx = current.indexOf(layer.id);
+					if (cb.checked && idx < 0) current.push(layer.id);
+					else if (!cb.checked && idx >= 0) current.splice(idx, 1);
+					onChange(current.slice());
+					refreshFooter();
+				});
+
+				list.appendChild(row);
+			})(allLayers[i]);
+		}
+
+		body.appendChild(list);
+
+		// Footer: "Select cells in diagram" + "Reset". Layers are model
+		// containers (mxGraph never selects the layer cell itself), so the
+		// select button resolves each picked layer to its descendant cells
+		// via getCellsForLayers and selects those — mirroring the tag
+		// picker. Disabled when no layer is picked.
+		var footer = document.createElement('div');
+		footer.className = 'geTagPickerFooter';
+
+		var selectBtn = document.createElement('button');
+		selectBtn.type = 'button';
+		selectBtn.className = 'geActionMenuItem';
+		mxUtils.write(selectBtn,
+			mxResources.get('selectCellsInDiagram',
+				null, 'Select cells in diagram'));
+		selectBtn.addEventListener('click', function(e)
+		{
+			e.preventDefault();
+			if (current.length == 0) return;
+			var cells = (typeof graph.getCellsForLayers == 'function') ?
+				graph.getCellsForLayers(current) : [];
+			if (cells.length > 0) graph.setSelectionCells(cells);
+			else graph.clearSelection();
+		});
+		footer.appendChild(selectBtn);
+
+		var resetBtn = document.createElement('button');
+		resetBtn.type = 'button';
+		resetBtn.className = 'geActionMenuItem geActionMenuItemDanger';
+		mxUtils.write(resetBtn, mxResources.get('reset', null, 'Reset'));
+		resetBtn.addEventListener('click', function(e)
+		{
+			e.preventDefault();
+			current = [];
+			onChange([]);
+			for (var i = 0; i < refreshers.length; i++)
+			{
+				refreshers[i]();
+			}
+			refreshFooter();
+		});
+		footer.appendChild(resetBtn);
+		body.appendChild(footer);
+
+		var refreshFooter = function()
+		{
+			var empty = current.length == 0;
+			selectBtn.classList.toggle('geActionMenuItemDisabled', empty);
+			selectBtn.disabled = empty;
+			resetBtn.classList.toggle('geActionMenuItemDisabled', empty);
+			resetBtn.disabled = empty;
+		};
+		refreshFooter();
+
+		openPopover(anchor, mxResources.get('selectLayers', null, 'Layers'), body);
+	}
+
+	// Generic anchored popover. The caller owns the body element; this
+	// helper handles positioning (under the anchor, flip up if cramped),
+	// the arrow, the open animation, and the close-on-outside-click /
+	// resize / scroll lifecycle.
+	function openPopover(anchor, header, body)
+	{
+		if (openPopover._open != null) openPopover._open.close();
+
+		var pop = document.createElement('div');
+		pop.className = 'geTagPicker';
+
+		var arrow = document.createElement('div');
+		arrow.className = 'geTagPickerArrow';
+		pop.appendChild(arrow);
+
+		if (header)
+		{
+			var headerEl = document.createElement('div');
+			headerEl.className = 'geTagPickerHeader';
+			mxUtils.write(headerEl, header);
+			pop.appendChild(headerEl);
+		}
+
+		pop.appendChild(body);
+
+		document.body.appendChild(pop);
+
+		var rect = anchor.getBoundingClientRect();
+		// `offsetWidth/Height` give the *layout* box, ignoring the
+		// initial `transform: scale(0)` we use for the open animation.
+		// `getBoundingClientRect()` would return zeros here and throw
+		// the arrow's alignment off.
+		var popW = pop.offsetWidth;
+		var popH = pop.offsetHeight;
+		var top = rect.bottom + 6;
+		var flippedAbove = false;
+
+		if (top + popH > window.innerHeight - 12)
+		{
+			top = Math.max(8, rect.top - popH - 6);
+			arrow.classList.add('geTagPickerArrowBottom');
+			flippedAbove = true;
+		}
+
+		var left = rect.left;
+
+		if (left + popW > window.innerWidth - 8)
+		{
+			left = Math.max(8, window.innerWidth - popW - 8);
+		}
+
+		pop.style.top = top + 'px';
+		pop.style.left = left + 'px';
+
+		var arrowLeftPx = Math.min(popW - 24,
+			Math.max(12, rect.left + rect.width / 2 - left - 6));
+		arrow.style.left = arrowLeftPx + 'px';
+
+		// Scale-in from the arrow tip — matches the inline-toolbar
+		// popover effect (a bouncy zoom anchored to the source button).
+		pop.style.transformOrigin = (arrowLeftPx + 6) + 'px ' +
+			(flippedAbove ? popH + 'px' : '0px');
+
+		requestAnimationFrame(function() { pop.classList.add('geTagPickerOpen'); });
+
+		function close()
+		{
+			document.removeEventListener('mousedown', onDocDown, true);
+			window.removeEventListener('resize', close);
+			window.removeEventListener('scroll', close, true);
+			if (pop.parentNode) pop.parentNode.removeChild(pop);
+			if (openPopover._open === api) openPopover._open = null;
+		}
+
+		function onDocDown(e)
+		{
+			if (pop.contains(e.target) || anchor.contains(e.target)) return;
+			// Canvas interaction (selecting cells, panning, etc.) should
+			// keep the popover open — the user often opens "Use selected
+			// cells" then picks cells in the canvas. Both background and
+			// cell clicks land inside the graph container, so a single
+			// containment check covers them consistently.
+			if (graph.container != null &&
+				graph.container.contains(e.target)) return;
+			close();
+		}
+
+		document.addEventListener('mousedown', onDocDown, true);
+		window.addEventListener('resize', close);
+		window.addEventListener('scroll', close, true);
+
+		// Expose the anchor so chip click handlers can detect "popover
+		// is already open for this chip" and toggle it closed instead
+		// of reopening.
+		var api = {close: close, anchor: anchor};
+		openPopover._open = api;
+		return api;
+	}
+
+	// Menu popover for the cell chip. Items: [{label, onClick, danger?,
+	// active?, separator?}]. A separator entry renders a thin divider.
+	// Clicking an item runs its handler and closes the menu.
+	function openMenuPopover(anchor, items)
+	{
+		var body = document.createElement('div');
+		body.className = 'geActionMenuList';
+
+		var refreshers = [];
+		var api;
+
+		for (var i = 0; i < items.length; i++)
+		{
+			(function(item)
+			{
+				if (item.separator)
+				{
+					var sep = document.createElement('div');
+					sep.className = 'geActionMenuSeparator';
+					body.appendChild(sep);
+					return;
+				}
+
+				var btn = document.createElement('button');
+				btn.type = 'button';
+				btn.className = 'geActionMenuItem';
+				if (item.danger) btn.classList.add('geActionMenuItemDanger');
+				if (item.active) btn.classList.add('geActionMenuItemActive');
+
+				// `item.disabled` may be a boolean OR a getter — getters
+				// let the menu reflect live state (e.g. canvas selection)
+				// without the popover being closed and reopened.
+				var isDisabled = function()
+				{
+					return (typeof item.disabled == 'function') ?
+						!!item.disabled() : !!item.disabled;
+				};
+
+				var refresh = function()
+				{
+					var d = isDisabled();
+					btn.classList.toggle('geActionMenuItemDisabled', d);
+					btn.disabled = d;
+				};
+				refresh();
+				refreshers.push(refresh);
+
+				mxUtils.write(btn, item.label);
+				btn.addEventListener('click', function(e)
+				{
+					e.preventDefault();
+					if (isDisabled()) return;
+					if (api) api.close();
+					// Pass the chip element so handlers that open a
+					// second popover (e.g. "Select by tags") can anchor
+					// it on the same chip the user just clicked.
+					item.onClick(anchor);
+				});
+				body.appendChild(btn);
+			})(items[i]);
+		}
+
+		api = openPopover(anchor, null, body);
+
+		// Keep menu item enabled-state in sync with the canvas selection
+		// while the popover is open. Listener is detached on close.
+		var onSelChange = function()
+		{
+			for (var i = 0; i < refreshers.length; i++) refreshers[i]();
+		};
+		graph.getSelectionModel().addListener(mxEvent.CHANGE, onSelChange);
+
+		var prevClose = api.close;
+		api.close = function()
+		{
+			graph.getSelectionModel().removeListener(onSelChange);
+			prevClose();
+		};
+
+		return api;
+	}
+
+	return {
+		cellListField: cellListField,
+		tagListField: tagListField,
+		layerListField: layerListField,
+		iconButton: makeIconButton,
+		// Programmatic entry points so callers can pop the tag or
+		// layer picker from a different anchor (e.g. the cells chip's
+		// "Select by tags" / "Select layers" items, which have no
+		// visible chip yet).
+		openTagPicker: openTagPicker,
+		openLayerPicker: openLayerPicker,
+		closePopover: function() {
+			if (openPopover._open != null) openPopover._open.close();
+		}
+	};
+};
+
+
+/**
+ * Custom action editor. Thin wrapper around AnimationDialog (kind='action')
+ * — translates the cell-link payload (`data:action/json,{title?,actions}`)
+ * into / out of AnimationDialog's `{title?, steps}` shape and forwards the
+ * save callback. All UI (picker, row rendering, selector chips, preview
+ * session, footer buttons) lives in AnimationDialog; the wrapper is just
+ * the format adapter.
+ */
+var CustomActionDialog = function(editorUi, currentValue, onSave)
+{
+	installCustomActionStyles();
+
+	// Parse the cell-link payload into the AnimationDialog initial shape.
+	// `{actions: […]}` → `{steps: […]}`. Nested `{animation: {steps: […]}}`
+	// wrappers inside `actions` are flattened so the user edits the inner
+	// steps inline alongside any other actions.
+	var initial = {steps: []};
+
+	if (currentValue != null && currentValue.substring(0, 17) == 'data:action/json,')
+	{
+		try
+		{
+			var parsed = JSON.parse(currentValue.substring(17));
+
+			if (Array.isArray(parsed.actions))
+			{
+				var flat = [];
+				for (var i = 0; i < parsed.actions.length; i++)
+				{
+					var a = parsed.actions[i];
+					if (a && a.animation && Array.isArray(a.animation.steps))
+					{
+						for (var s = 0; s < a.animation.steps.length; s++)
+						{
+							flat.push(a.animation.steps[s]);
+						}
+					}
+					else
+					{
+						flat.push(a);
+					}
+				}
+				initial.steps = flat;
+			}
+
+			if (typeof parsed.title == 'string' && parsed.title !== '')
+			{
+				initial.title = parsed.title;
+			}
+		}
+		catch (e)
+		{
+			// Malformed — open with an empty editor.
+		}
+	}
+
+	// Read previously-saved window position / size. Falls back to a
+	// centered 700×560 box. Same pattern as the animation window in
+	// Menus.js — `installWindowPersistence` below keeps the saved state
+	// up to date on every move/resize/dock event.
+	var saved = mxSettings.getWindowState('customAction');
+	var w = (saved != null && saved.w != null) ? saved.w : 700;
+	var h = (saved != null && saved.h != null) ? saved.h : 560;
+	var x = (saved != null && saved.x != null) ? saved.x :
+		Math.max(40, (document.body.offsetWidth - w) / 2);
+	var y = (saved != null && saved.y != null) ? saved.y : 80;
+
+	var dialog = new AnimationDialog(editorUi, x, y, w, h, {
+		kind: 'action',
+		showTitle: true,
+		windowTitleKey: 'action',
+		windowTitleFallback: 'Action',
+		initial: initial,
+		save: function(data)
+		{
+			// Strip empty title to keep the JSON tight.
+			var out = {actions: data.steps};
+			if (data.title) out.title = data.title;
+			onSave('data:action/json,' + JSON.stringify(out));
+		}
+	});
+
+	editorUi.installWindowPersistence('customAction', dialog);
+
+	if (saved != null)
+	{
+		editorUi.restoreWindowState('customAction', dialog);
+
+		// restoreWindowState applies the saved `visible` flag too — which is
+		// `false` if the previous session closed the dialog via Cancel — so we
+		// would re-open hidden. Force visible again to match the user's intent
+		// (they just clicked Edit). Mirrors the same setVisible(true) call
+		// the animation window does in Menus.js after restoring.
+		dialog.window.setVisible(true);
+	}
+
+	return dialog;
+};
+
+
+/**
+ * Schema describing the form fields each action type needs in the dialog.
+ * `selector: true` means the action carries cells/tags/excludeCells.
+ * `fields` is a list of inline inputs for action-specific params, rendered
+ * inside the row after the selector (or instead of it when `noSelector`).
+ * `primary` is a single value-bearing field used by actions that aren't
+ * objects (e.g. `wait: 1000` or `open: "https://..."`).
+ */
+// `allowLayers: true` adds the "Select layers" item to the cells-chip
+// popover. It's set on every cell-targeting (selector) action; the layer
+// resolves to the cells *within* it at playback (getCellsForLayers). The
+// one exception is the visibility actions (toggle/show/hide) with
+// transient:false, where the engine flips the layer cell's own `visible`
+// (cascading) instead — see the layerCells branch in getCellsForAction.
+CustomActionDialog.SCHEMAS = {
+	toggle:      {label: 'Toggle',        icon: '⇄', selector: true, allowLayers: true},
+	show:        {label: 'Show',          icon: '✓', selector: true, allowLayers: true},
+	hide:        {label: 'Hide',          icon: '✗', selector: true, allowLayers: true},
+	select:      {label: 'Select',        icon: '☑', selector: true, allowLayers: true},
+	scroll:      {label: 'Scroll To',     icon: '↓', selector: true, allowLayers: true,
+		fields: [{name: 'border', type: 'number', placeholder: '0', width: 36, label: '',
+			titleKey: 'border', title: 'Border'},
+		         {name: 'smooth', type: 'checkbox',
+			labelKey: 'transition', label: 'Transition'}]},
+	opacity:     {label: 'Set Opacity',   icon: '◐', selector: true, allowLayers: true,
+		fields: [{name: 'value', type: 'number', min: 0, max: 1, step: 0.1, def: '1',
+			width: 50, label: '', titleKey: 'opacity', title: 'Opacity'}]},
+	fadeIn:      {label: 'Fade In',       icon: '↗', selector: true, allowLayers: true,
+		fields: [{name: 'delay', type: 'number', min: 0, step: 100, width: 50,
+			placeholder: '400', label: 'ms',
+			titleKey: 'duration', title: 'Duration (ms)'}]},
+	fadeOut:     {label: 'Fade Out',      icon: '↘', selector: true, allowLayers: true,
+		fields: [{name: 'delay', type: 'number', min: 0, step: 100, width: 50,
+			placeholder: '400', label: 'ms',
+			titleKey: 'duration', title: 'Duration (ms)'}]},
+	fadeTo:      {label: 'Fade To',       icon: '◐', selector: true, allowLayers: true,
+		fields: [{name: 'value', type: 'number', min: 0, max: 1, step: 0.1, def: '0.5',
+			width: 50, label: '', titleKey: 'opacity', title: 'Opacity'},
+		         {name: 'delay', type: 'number', min: 0, step: 100, width: 50,
+			placeholder: '400', label: 'ms',
+			titleKey: 'duration', title: 'Duration (ms)'}]},
+	wipeIn:      {label: 'Wipe In',       icon: '→', selector: true, allowLayers: true},
+	wipeOut:     {label: 'Wipe Out',      icon: '←', selector: true, allowLayers: true},
+	popIn:       {label: 'Pop In',        icon: '✨', selector: true, allowLayers: true},
+	popOut:      {label: 'Pop Out',       icon: '💨', selector: true, allowLayers: true},
+	highlight:   {label: 'Highlight',     icon: '🌟', selector: true, allowLayers: true,
+		// Native <input type="color"> can't be empty / placeholder, so
+		// we pre-fill with mxGraph's default highlight color
+		// (DEFAULT_VALID_COLOR — lime green). The runtime's
+		// graph.highlightCells() falls back to the same value when the
+		// field is absent, so the picker mirrors the runtime default.
+		fields: [{name: 'color',    type: 'color',  def: '#00FF00', width: 36, label: '',
+			title: 'Color'},
+		         {name: 'duration', type: 'number', min: 0, step: 100, width: 50,
+			placeholder: '1000', label: 'ms',
+			titleKey: 'duration', title: 'Duration (ms)'},
+		         {name: 'opacity',  type: 'number', min: 0, max: 100, step: 10,
+			placeholder: '100', width: 50, label: '%',
+			titleKey: 'opacity', title: 'Opacity'}]},
+	style:       {label: 'Set Style',     icon: '🎨', selector: true, allowLayers: true,
+		fields: [{name: 'key',   type: 'text', placeholder: 'flowAnimation',
+			width: 90, label: '', title: 'Key'},
+		         {name: 'value', type: 'text', placeholder: '1',
+			width: 50, label: '', title: 'Value'}]},
+	toggleStyle: {label: 'Toggle Style',  icon: '🔀', selector: true, allowLayers: true,
+		fields: [{name: 'key',          type: 'text', placeholder: 'flowAnimation',
+			width: 90, label: '', title: 'Key'},
+		         {name: 'defaultValue', type: 'text', placeholder: '0',
+			width: 50, label: '', title: 'Default value'}]},
+	flow:        {label: 'Flow',          icon: '➡', selector: true, allowLayers: true,
+		fields: [{name: 'start', type: 'select', options: [
+			{value: '', label: '(toggle)'},
+			{value: 'true', label: 'On'},
+			{value: 'false', label: 'Off'}], label: ''}]},
+	wait:        {label: 'Wait',          icon: '⏱', noSelector: true,
+		primary: {name: 'value', type: 'number', min: 0, step: 100, width: 60,
+			def: '1000', label: 'ms', titleKey: 'wait', title: 'Wait'}},
+	open:        {label: 'Open Link',     icon: '🔗', noSelector: true,
+		primary: {name: 'value', type: 'text',
+			placeholder: 'https://… or data:page/id,…', label: '', title: 'URL'}},
+	// labelKey reroutes the action label to the generic `view` resource
+	// so we don't need to ship a dedicated `viewbox` translation across
+	// every locale — the picker, step list, and link summary all honor
+	// `schema.labelKey` when present.
+	viewbox:     {label: 'View',          labelKey: 'view',
+		icon: '⊞', noSelector: true,
+		fields: [{name: 'x',      type: 'number', placeholder: 'x', width: 36, label: '',
+			title: 'X'},
+		         {name: 'y',      type: 'number', placeholder: 'y', width: 36, label: '',
+			title: 'Y'},
+		         {name: 'width',  type: 'number', placeholder: 'w', width: 36, label: '',
+			titleKey: 'width', title: 'Width'},
+		         {name: 'height', type: 'number', placeholder: 'h', width: 36, label: '',
+			titleKey: 'height', title: 'Height'},
+		         {name: 'border', type: 'number', placeholder: 'b', width: 36, label: '',
+			titleKey: 'border', title: 'Border'},
+		         {name: 'smooth', type: 'checkbox',
+			labelKey: 'transition', label: 'Transition'}]},
+	tags:        {label: 'Toggle Tags',   icon: '🏷', noSelector: true,
+		fields: [{name: 'toggle',  type: 'tagList',
+			labelKey: 'toggle', label: 'Toggle',
+			modeField: 'toggleMatch'},
+		         {name: 'hidden',  type: 'tagList',
+			labelKey: 'hide',   label: 'Hide',
+			modeField: 'hiddenMatch'},
+		         {name: 'visible', type: 'tagList',
+			labelKey: 'show',   label: 'Show',
+			modeField: 'visibleMatch'}]}
 };
 
 
@@ -7255,6 +8859,78 @@ var RevisionDialog = function(editorUi, revs, restoreFn)
 
 	div.appendChild(buttons);
 	div.appendChild(tb);
+
+	this.container = div;
+};
+
+/**
+ * Constructs a dialog that lets the user choose among best-effort recovery
+ * candidates for a file that failed to load. okFn(candidate) is called with the
+ * chosen candidate; each opens as a new unsaved copy (the original is never
+ * overwritten). Used when two or more candidates are available (eg. a prior
+ * version/backup and an in-memory repair).
+ */
+var RecoveryDialog = function(editorUi, candidates, okFn, cancelFn)
+{
+	var div = document.createElement('div');
+	div.style.paddingBottom = '10px';
+
+	var hd = document.createElement('h3');
+	mxUtils.write(hd, mxResources.get('recoverTitle'));
+	hd.style.cssText = 'width:100%;text-align:center;margin-top:0px;margin-bottom:10px';
+	div.appendChild(hd);
+
+	var addCandidate = function(candidate)
+	{
+		var row = document.createElement('div');
+		row.className = 'geDialogSection';
+		row.style.cursor = 'pointer';
+		row.style.marginBottom = '8px';
+		row.style.padding = '10px';
+
+		var label = document.createElement('div');
+		label.style.fontWeight = '600';
+		label.style.marginBottom = '4px';
+		mxUtils.write(label, candidate.label);
+		row.appendChild(label);
+
+		if (candidate.description != null)
+		{
+			var desc = document.createElement('div');
+			desc.style.fontSize = '12px';
+			desc.style.opacity = '0.75';
+			mxUtils.write(desc, candidate.description);
+			row.appendChild(desc);
+		}
+
+		mxEvent.addListener(row, 'click', function()
+		{
+			okFn(candidate);
+		});
+
+		div.appendChild(row);
+	};
+
+	for (var i = 0; i < candidates.length; i++)
+	{
+		addCandidate(candidates[i]);
+	}
+
+	var btns = document.createElement('div');
+	btns.style.marginTop = '34px';
+	btns.style.textAlign = 'right';
+
+	var cancelBtn = mxUtils.button(mxResources.get('cancel'), function()
+	{
+		if (cancelFn != null)
+		{
+			cancelFn();
+		}
+	});
+
+	cancelBtn.className = 'geBtn';
+	btns.appendChild(cancelBtn);
+	div.appendChild(btns);
 
 	this.container = div;
 };
@@ -8679,7 +10355,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 	var helpOption = document.createElement('option');
 
 	if (editorUi.isExternalDataComms() &&
-		typeof mxMermaidToDrawio !== 'undefined' && window.isMermaidEnabled &&
+		EditorUi.isMermaidSupported() &&
 		mxUtils.indexOf(Editor.aiActions, 'createPublic') >= 0)
 	{
 		createPublicOption.setAttribute('value', 'createPublic');
@@ -8742,7 +10418,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 		mxUtils.write(divider2, '\u2500\u2500\u2500\u2500\u2500\u2500');
 		typeSelect.appendChild(divider2);
 
-		if (typeof mxMermaidToDrawio !== 'undefined' && window.isMermaidEnabled &&
+		if (EditorUi.isMermaidSupported() &&
 			mxUtils.indexOf(Editor.aiActions, 'create') >= 0)
 		{
 			createOption.setAttribute('value', 'create');
@@ -9917,6 +11593,16 @@ var ChatWindow = function(editorUi, x, y, w, h)
 					{
 						bubble.style.whiteSpace = 'pre-wrap';
 						bubble.appendChild(createDivForText(data[0]));
+
+						// Surfaces the response body when it carried content that
+						// could not be turned into a diagram (e.g. a truncated or
+						// malformed XML reply), so the chat shows the result and a
+						// retry instead of an empty bubble
+						if (data[1] != null && data[1].length > 0)
+						{
+							bubble.appendChild(createDivForText(data[1]));
+						}
+
 						bubble.appendChild(createDivForText(data[2]));
 						bubble.appendChild(createRetryButton(mxResources.get('refresh')));
 					}
@@ -9931,7 +11617,7 @@ var ChatWindow = function(editorUi, x, y, w, h)
 				editorUi.generateOpenAiMermaidDiagram(thePrompt, function(xml)
 				{
 					handleResponse(['', xml, ''], thePrompt);
-				}, handleError, true);
+				}, handleError);
 			}
 			else
 			{
@@ -9984,11 +11670,14 @@ var ChatWindow = function(editorUi, x, y, w, h)
 									{
 										editorUi.parseMermaidDiagram(mermaid, null, mxUtils.bind(this, function(xml)
 										{
-											handleResponse(['', xml, ''], thePrompt);
+											// Wrap in an editable mermaid group (carries the
+											// source for double-click edit), as the insert dialog does
+											handleResponse(['', mxMermaidToDrawio.wrapGroup(
+												xml, mermaid, null), ''], thePrompt);
 										}), mxUtils.bind(this, function(e)
 										{
 											handleErrorWithTimeout(e);
-										}), null, true);
+										}));
 									}
 								}
 								else
@@ -10178,8 +11867,2293 @@ var TagsWindow = function(editorUi, x, y, w, h)
 		tagsComponent.refresh();
 		this.window.fit();
 	}));
-	
+
 	editorUi.installResizeHandler(this, true);
+};
+
+/**
+ * Step-based animation editor. Non-modal floating window so the user can
+ * select cells in the main canvas while building the script.
+ *
+ * The script is stored as an 'animation' attribute on each page's model
+ * root, so each page has its own animation. Switching pages reloads the
+ * script for the new page and persists any unsaved changes from the old one.
+ *
+ * The animation engine is Editor.AnimationPlayer — see Editor.js.
+ */
+/**
+ * Step-based animation editor. Edits a JSON {steps: [...]} array directly —
+ * the same structure used in {animation: {steps: [...]}} custom-link actions
+ * and on the model root's `animation` attribute (after legacy text conversion).
+ *
+ * Two operating modes:
+ *   - kind 'page' (default): reads/writes the model root's animation
+ *     attribute. Auto-converts legacy text on read; always writes JSON.
+ *   - kind 'action': operates on the steps array passed in via opts.initial
+ *     and hands the edited array back to opts.save(steps) on Apply. Used by
+ *     the LinkDialog's "Custom action" option.
+ */
+var AnimationDialog = function(editorUi, x, y, w, h, opts)
+{
+	opts = opts || {};
+	var kind = opts.kind || 'page';
+	var graph = editorUi.editor.graph;
+	var selectorChips = SelectorChips.create(graph, editorUi);
+
+	// Initialized up-front so `makeStepRow` — called via the initial
+	// `renderList()` further below — can safely call `.has(idx)` on it.
+	// `var` hoisting alone isn't enough: the value would still be
+	// `undefined` until the assignment lower in the function runs.
+	var playingSteps = new Set();
+
+	// Static label refreshers — registered closures get re-run when the
+	// active language changes, so the dialog re-localizes without close /
+	// reopen. (Dynamic row labels re-localize for free via renderList.)
+	var staticRefreshers = [];
+
+	var resolveWindowTitle = function()
+	{
+		if (opts.windowTitleKey)
+		{
+			return mxResources.get(opts.windowTitleKey, null,
+				opts.windowTitleFallback || 'Animation');
+		}
+		// Default title — page-mode opens via Edit > Page Setup > Edit;
+		// the section there is labelled "Lightbox animation", so reuse
+		// that resource to keep the wording consistent.
+		return mxResources.get('lightboxAnimation', null, 'Lightbox animation');
+	};
+
+	var div = document.createElement('div');
+	div.style.cssText = 'padding:18px;box-sizing:border-box;height:100%;' +
+		'display:flex;flex-direction:column;font-size:13px;overflow:hidden;' +
+		'color:light-dark(#1d1d1f,#e0e0e0)';
+
+	// Optional title row — only rendered for action mode (opts.showTitle).
+	// Lets the user attach a human-readable label to a custom action, which
+	// the host (e.g. Edit Link dialog) shows in place of the action chip's
+	// generic summary.
+	var titleInput = null;
+	var titleLabel = null;
+	if (opts.showTitle)
+	{
+		var titleRow = document.createElement('div');
+		titleRow.style.cssText = 'display:flex;align-items:center;gap:8px;' +
+			'margin-bottom:8px;flex:0 0 auto';
+
+		titleLabel = document.createElement('span');
+		titleLabel.style.cssText = 'font-weight:600;flex:0 0 auto';
+		var applyTitleLabel = function()
+		{
+			titleLabel.textContent = '';
+			mxUtils.write(titleLabel,
+				mxResources.get('title', null, 'Title') + ':');
+		};
+		applyTitleLabel();
+		staticRefreshers.push(applyTitleLabel);
+		titleRow.appendChild(titleLabel);
+
+		titleInput = document.createElement('input');
+		titleInput.type = 'text';
+		titleInput.style.cssText = 'flex:1;padding:4px 6px;' +
+			'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:4px;' +
+			'background:light-dark(#ffffff,#1c1c1e);' +
+			'color:light-dark(#1d1d1f,#e0e0e0)';
+		var applyTitlePlaceholder = function()
+		{
+			titleInput.placeholder = mxResources.get('optional', null, 'optional');
+			titleInput.title = mxResources.get('title', null, 'Title');
+		};
+		applyTitlePlaceholder();
+		staticRefreshers.push(applyTitlePlaceholder);
+
+		titleRow.appendChild(titleInput);
+		div.appendChild(titleRow);
+	}
+
+	// Header row layout (page mode):
+	//   Loop (left) | Enabled (centered) | Edit Text (right)
+	// Action mode (custom links) has only Edit Text on the right with a
+	// leading spacer — the other two controls don't apply.
+	var listHeader = document.createElement('div');
+	listHeader.style.cssText = 'display:flex;align-items:center;' +
+		'justify-content:space-between;margin-bottom:6px;flex:0 0 auto';
+
+	// Shared style for the three header checkbox labels.
+	var headerLabelCss = 'display:flex;align-items:center;gap:4px;' +
+		'cursor:pointer;font-size:12px;color:light-dark(#6e6e73,#a0a0a0)';
+
+	// Loop checkbox — only meaningful in page mode (chromeless playback
+	// reads the loop flag from the file). Action mode (custom links) is
+	// always one-shot — adding loop there would loop forever once a user
+	// clicks the link, which is never what they want.
+	var loopCheckbox = null;
+	// Disabled checkbox — gates chromeless autoplay. Checked = the steps
+	// stay attached to the page but don't autoplay (a temporary off-switch
+	// without deleting the script). The JSON field is `enabled` (default
+	// true); this checkbox is its inverse, reusing the pre-existing
+	// `disabled` resource. Unchecked by default.
+	var disabledCheckbox = null;
+
+	if (kind == 'page')
+	{
+		var loopLabel = document.createElement('label');
+		loopLabel.style.cssText = headerLabelCss;
+		loopCheckbox = document.createElement('input');
+		loopCheckbox.type = 'checkbox';
+		loopCheckbox.style.margin = '0';
+		loopLabel.appendChild(loopCheckbox);
+		var loopText = document.createElement('span');
+		var applyLoopText = function()
+		{
+			loopText.textContent = '';
+			mxUtils.write(loopText, mxResources.get('loop', null, 'Loop'));
+		};
+		applyLoopText();
+		staticRefreshers.push(applyLoopText);
+		loopLabel.appendChild(loopText);
+		listHeader.appendChild(loopLabel);
+
+		// Disabled checkbox — centered between Loop and Edit Text. Wrapped
+		// in flex:1 + justify-content:center so it sits in the middle
+		// regardless of the side labels' widths.
+		var disabledWrap = document.createElement('span');
+		disabledWrap.style.cssText = 'flex:1;display:flex;' +
+			'justify-content:center';
+		var disabledLabel = document.createElement('label');
+		disabledLabel.style.cssText = headerLabelCss;
+		disabledCheckbox = document.createElement('input');
+		disabledCheckbox.type = 'checkbox';
+		disabledCheckbox.style.margin = '0';
+		disabledLabel.appendChild(disabledCheckbox);
+		var disabledText = document.createElement('span');
+		var applyDisabledText = function()
+		{
+			disabledText.textContent = '';
+			mxUtils.write(disabledText, mxResources.get('disabled',
+				null, 'Disabled'));
+		};
+		applyDisabledText();
+		staticRefreshers.push(applyDisabledText);
+		disabledLabel.appendChild(disabledText);
+		disabledWrap.appendChild(disabledLabel);
+		listHeader.appendChild(disabledWrap);
+	}
+	else
+	{
+		// Pad the left side so the right-aligned Edit Text checkbox keeps
+		// its position (flex justify-content: space-between needs at least
+		// two children to look right).
+		var spacer = document.createElement('span');
+		listHeader.appendChild(spacer);
+	}
+
+	var advancedLabel = document.createElement('label');
+	advancedLabel.style.cssText = headerLabelCss;
+	var advancedCheckbox = document.createElement('input');
+	advancedCheckbox.type = 'checkbox';
+	advancedCheckbox.style.margin = '0';
+	advancedLabel.appendChild(advancedCheckbox);
+	var advancedText = document.createElement('span');
+	var applyAdvancedText = function()
+	{
+		advancedText.textContent = '';
+		mxUtils.write(advancedText, mxResources.get('editText',
+			null, 'Edit Text'));
+	};
+	applyAdvancedText();
+	staticRefreshers.push(applyAdvancedText);
+	advancedLabel.appendChild(advancedText);
+	listHeader.appendChild(advancedLabel);
+
+	div.appendChild(listHeader);
+
+	// Structured step list view (default). flex:1 1 0 with min-height:0 lets
+	// it expand to fill the available space without being capped — the
+	// dialog gets a real resize handle and this is the area that absorbs it.
+	var stepList = document.createElement('div');
+	stepList.style.cssText = 'flex:1 1 0;min-height:0;' +
+		// overflow:auto (not just overflow-y) so a horizontal scrollbar
+		// appears when rows are wider than the dialog — keeps the chip
+		// and the right-aligned inputs both visible instead of letting
+		// the inputs slide into the chip's space.
+		'overflow:auto;padding:4px;box-sizing:border-box;' +
+		'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:6px;' +
+		'background:light-dark(#ffffff,#1c1c1e)';
+	// Contain row-reorder drag events — otherwise dragover bubbles to
+	// the mxGraph canvas, which highlights as if a cell were being dropped.
+	containDragEvents(stepList);
+	div.appendChild(stepList);
+
+	// Raw textarea (toggled via advanced checkbox). Same flex behavior.
+	var list = document.createElement('textarea');
+	list.spellcheck = false;
+	list.style.cssText = 'display:none;width:100%;flex:1 1 0;min-height:0;' +
+		'resize:none;font-family:monospace;font-size:12px;' +
+		'padding:8px;box-sizing:border-box;' +
+		'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:6px;' +
+		'background:light-dark(#ffffff,#1c1c1e);' +
+		'color:light-dark(#1d1d1f,#e0e0e0)';
+	div.appendChild(list);
+
+	// Inline validation message for advanced (raw JSON) mode. Shown when the
+	// textarea fails to parse so an invalid edit is visibly rejected instead
+	// of being silently dropped — parseAnimationData now throws on malformed
+	// JSON, and without this the user gets no feedback at all.
+	var jsonError = document.createElement('div');
+	jsonError.style.cssText = 'display:none;flex:0 0 auto;margin-top:6px;' +
+		'padding:6px 8px;border-radius:6px;font-size:12px;' +
+		'background:light-dark(#fde7e9,#3a1d1f);' +
+		'color:light-dark(#b3261e,#ffb4ab);' +
+		'border:1px solid light-dark(#f1aeb5,#7a2e2e);' +
+		'white-space:pre-wrap;word-break:break-word';
+	div.appendChild(jsonError);
+
+	// True while the advanced-mode textarea last parsed cleanly. Save is
+	// blocked when false so we never silently commit the last valid state
+	// behind a textarea showing something different.
+	var jsonValid = true;
+
+	var showJsonError = function(msg)
+	{
+		jsonValid = (msg == null);
+		jsonError.style.display = (msg == null) ? 'none' : 'block';
+		if (msg != null) jsonError.textContent = msg;
+	};
+
+	// Validates the current textarea content and updates the inline error.
+	var validateTextarea = function()
+	{
+		try
+		{
+			Editor.parseAnimationData(list.value);
+			showJsonError(null);
+		}
+		catch (e)
+		{
+			showJsonError(mxResources.get('error', null, 'Error') +
+				': ' + e.message);
+		}
+	};
+
+	// Internal state: the canonical JSON {steps:[...]} array. The textarea
+	// (advanced mode) shows a pretty-printed copy of this; mutations always
+	// go through setData() which re-renders and syncs the textarea.
+	var data = {steps: []};
+	var currentRoot = graph.getModel().getRoot();
+
+	var clone = function(o)
+	{
+		return JSON.parse(JSON.stringify(o));
+	};
+
+	// Loads initial data from the right source for our editing mode.
+	var loadFromContext = function()
+	{
+		if (kind == 'page')
+		{
+			var raw = graph.getAttributeForCell(currentRoot, 'animation');
+
+			try
+			{
+				data = Editor.parseAnimationData(raw);
+			}
+			catch (e)
+			{
+				// Malformed JSON in the stored attribute — start empty
+				// rather than failing to open the dialog.
+				data = Editor.parseAnimationData(null);
+			}
+		}
+		else
+		{
+			// 'action' mode — caller supplies the initial state as either
+			// a bare steps array (legacy) or a `{title?, steps}` object.
+			var init = opts.initial;
+			if (Array.isArray(init))
+			{
+				data = {steps: clone(init)};
+			}
+			else if (init != null && typeof init == 'object')
+			{
+				data = clone(init);
+			}
+			else
+			{
+				data = {steps: []};
+			}
+		}
+
+		if (data.steps == null)
+		{
+			data.steps = [];
+		}
+
+		// Action mode has no Loop / Disabled checkboxes (custom links are
+		// one-shot triggers and don't have an autoplay gate) — strip any
+		// stray values that may have leaked in via the host so the saved
+		// payload stays clean.
+		if (kind != 'page')
+		{
+			if (data.loop != null) delete data.loop;
+			if (data.enabled != null) delete data.enabled;
+		}
+
+		list.value = JSON.stringify(data, null, 2);
+		if (titleInput != null) titleInput.value = data.title || '';
+		// Sync the Loop and Disabled checkboxes to the loaded state.
+		// parseAnimationData normalizes both to booleans (true when
+		// missing); for hand-built JSON without normalization, treat
+		// undefined as enabled. The Disabled checkbox is the inverse of
+		// the `enabled` field.
+		if (loopCheckbox != null)
+		{
+			loopCheckbox.checked = (data.loop == null) ? true : !!data.loop;
+		}
+		if (disabledCheckbox != null)
+		{
+			disabledCheckbox.checked = (data.enabled == null) ? false :
+				!data.enabled;
+		}
+	};
+
+	loadFromContext();
+
+	// Dirty tracking — any mutation flips the flag; Apply / Share clears it.
+	// When dirty, Apply gets the primary-button style as a visual nudge.
+	var dirty = false;
+	var applyBtn = null;
+	var previewBtn = null;
+
+	var setDirty = function(value)
+	{
+		dirty = value;
+
+		if (applyBtn != null)
+		{
+			applyBtn.className = 'geBtn' + (dirty ? ' gePrimaryBtn' : '');
+		}
+
+		if (previewBtn != null)
+		{
+			previewBtn.className = 'geBtn' + (dirty ? '' : ' gePrimaryBtn');
+		}
+	};
+
+	// Disabled checkbox change handler — same pattern as Loop below. The
+	// checkbox is the inverse of the `enabled` field (checked = disabled).
+	if (disabledCheckbox != null)
+	{
+		disabledCheckbox.addEventListener('change', function()
+		{
+			data.enabled = !disabledCheckbox.checked;
+			list.value = JSON.stringify(data, null, 2);
+			setDirty(true);
+		});
+	}
+
+	// Loop checkbox change handler — wired after setDirty is defined so it
+	// can flip the dirty flag without a forward reference.
+	if (loopCheckbox != null)
+	{
+		loopCheckbox.addEventListener('change', function()
+		{
+			data.loop = !!loopCheckbox.checked;
+			// Keep the raw textarea in sync — `setData` doesn't fire for
+			// this checkbox since it isn't a step mutation.
+			list.value = JSON.stringify(data, null, 2);
+			setDirty(true);
+		});
+	}
+
+	// Title input change handler — wired after setDirty is defined so the
+	// input flips the dirty flag without a forward reference.
+	if (titleInput != null)
+	{
+		titleInput.addEventListener('input', function()
+		{
+			if (titleInput.value) data.title = titleInput.value;
+			else delete data.title;
+			setDirty(true);
+		});
+
+		// Enter in the title input = Save. `applyBtn` is created later
+		// in the function; by the time the user actually hits Enter,
+		// the click() call resolves to the real button (which runs
+		// applyChanges + closes the window). Shift+Enter / IME composing
+		// keystrokes are ignored.
+		titleInput.addEventListener('keydown', function(e)
+		{
+			if (e.keyCode === 13 && !e.shiftKey && !e.isComposing &&
+				applyBtn != null)
+			{
+				e.preventDefault();
+				applyBtn.click();
+			}
+		});
+	}
+
+	// ============================================================
+	// Step / selector helpers
+	// ============================================================
+
+	// Recognized action keys, in the order we check for them when deciding
+	// how to render a step. A step is allowed to have multiple keys (= parallel
+	// effects within that step), but the UI keys its display off the first one.
+	// Same vocabulary as CustomActionDialog.SCHEMAS so every custom-action
+	// type works as an animation step.
+	var STEP_KEYS = ['wait', 'fadeIn', 'fadeOut', 'fadeTo', 'opacity',
+		'wipeIn', 'wipeOut', 'popIn', 'popOut', 'flow',
+		'toggle', 'show', 'hide', 'select', 'style', 'toggleStyle',
+		'highlight', 'scroll', 'viewbox', 'open', 'tags'];
+
+	var getStepKey = function(step)
+	{
+		for (var i = 0; i < STEP_KEYS.length; i++)
+		{
+			if (step[STEP_KEYS[i]] !== undefined) return STEP_KEYS[i];
+		}
+
+		return null;
+	};
+
+	// Returns the selector sub-object (cells/tags/excludeCells/params) for the
+	// step's primary action key. null for wait (no cell parameter) and for
+	// unknown shapes.
+	var getStepSel = function(step)
+	{
+		var key = getStepKey(step);
+
+		if (key == null || key == 'wait') return null;
+
+		return step[key];
+	};
+
+	// Display name + icon for a step. fadeTo with value 1 or 0 is shown as
+	// Fade In / Fade Out so common cases get familiar labels.
+	var stepLabel = function(step)
+	{
+		var key = getStepKey(step);
+		var T = function(k, dflt) { return mxResources.get(k, null, dflt); };
+
+		// fadeTo collapses to Fade In / Fade Out at the boundary values so
+		// merged step labels stay consistent with what the engine produces.
+		if (key == 'fadeTo')
+		{
+			var v = step.fadeTo.value;
+			if (v === 1) return {icon: '↗', text: T('fadeIn', 'Fade In')};
+			if (v === 0) return {icon: '↘', text: T('fadeOut', 'Fade Out')};
+			return {icon: '◐', text: T('fadeTo', 'Fade To')};
+		}
+
+		// Flow direction surfaces in the label so the row is readable
+		// without inspecting the inline select control.
+		if (key == 'flow')
+		{
+			if (step.flow.start === true) return {icon: '➡', text: T('flowOn', 'Flow On')};
+			if (step.flow.start === false) return {icon: '⏸', text: T('flowOff', 'Flow Off')};
+			return {icon: '➡', text: T('flowOn', 'Flow Toggle')};
+		}
+
+		if (key == 'opacity') return {icon: '◐', text: T('setOpacity', 'Set Opacity')};
+
+		// Generic fallback: read icon/label from the SCHEMAS catalogue so
+		// any action type (highlight, viewbox, scroll, etc.) renders with
+		// the same visual identity it has in the CustomActionDialog. If
+		// the schema declares a `labelKey`, that resource is looked up
+		// instead of the action key — lets actions share a generic label
+		// (e.g. viewbox → `view`) without shipping a dedicated string.
+		var schema = (key != null) ? CustomActionDialog.SCHEMAS[key] : null;
+		if (schema != null)
+		{
+			return {icon: schema.icon || '?',
+				text: T(schema.labelKey || key, schema.label || key)};
+		}
+
+		return {icon: '?', text: key || '?'};
+	};
+
+	var cellLabel = function(ref)
+	{
+		// "*" matches every animatable cell. "all" was the legacy keyword and
+		// still works unless a real cell is literally named "all".
+		if (ref == '*' || (ref == 'all' && graph.getModel().getCell('all') == null))
+		{
+			return mxResources.get('allCells', null, 'All cells');
+		}
+
+		var cell = graph.getModel().getCell(ref);
+
+		if (cell == null)
+		{
+			return ref + ' (?)';
+		}
+
+		var label = graph.convertValueToString(cell);
+		label = (label || '').replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+
+		return label != '' ? label : ref;
+	};
+
+	// Renders the selector (cells + tags) as a compact human-readable string.
+	// Truncates the cell list at 3 names; tag chips are shown as "tag: foo".
+	var formatSelectorText = function(sel)
+	{
+		if (sel == null) return '';
+
+		var parts = [];
+
+		if (Array.isArray(sel.cells) && sel.cells.length > 0)
+		{
+			var hasWildcard = false;
+			var ids = [];
+
+			for (var i = 0; i < sel.cells.length; i++)
+			{
+				if (sel.cells[i] == '*' ||
+					(sel.cells[i] == 'all' && graph.getModel().getCell('all') == null))
+				{
+					hasWildcard = true;
+				}
+				else
+				{
+					ids.push(sel.cells[i]);
+				}
+			}
+
+			if (hasWildcard)
+			{
+				parts.push(mxResources.get('allCells', null, 'All cells'));
+			}
+
+			if (ids.length > 0)
+			{
+				var names = [];
+				for (var i = 0; i < Math.min(ids.length, 3); i++)
+				{
+					names.push(cellLabel(ids[i]));
+				}
+				var s = names.join(', ');
+				if (ids.length > 3) s += ', … +' + (ids.length - 3);
+				parts.push(s);
+			}
+		}
+
+		if (Array.isArray(sel.tags) && sel.tags.length > 0)
+		{
+			parts.push(mxResources.get('tag', null, 'Tag') + ': ' +
+				sel.tags.join(', '));
+		}
+
+		if (Array.isArray(sel.layers) && sel.layers.length > 0)
+		{
+			var layerNames = [];
+			for (var i = 0; i < sel.layers.length; i++)
+			{
+				var cell = graph.getModel().getCell(sel.layers[i]);
+				if (cell != null)
+				{
+					var n = graph.convertValueToString(cell);
+					layerNames.push((n != null && n !== '') ? n : sel.layers[i]);
+				}
+				else layerNames.push(sel.layers[i]);
+			}
+			parts.push(mxResources.get('layer', null, 'Layer') + ': ' +
+				layerNames.join(', '));
+		}
+
+		return parts.join(', ') || '—';
+	};
+
+	// ============================================================
+	// State accessors / mutations
+	// ============================================================
+
+	// Pretty-prints the current state into the textarea (advanced mode).
+	var syncTextarea = function()
+	{
+		list.value = JSON.stringify(data, null, 2);
+	};
+
+	// Refreshes both views after mutating data.steps directly. Use this
+	// for structural changes (add/remove/reorder steps, chip visibility
+	// changes) where the row DOM needs to be rebuilt.
+	var refresh = function()
+	{
+		syncTextarea();
+		setDirty(true);
+		renderList();
+	};
+
+	// Lighter-weight variant: syncs the textarea and dirty flag but
+	// does NOT rebuild the row list. Use for inline field edits so the
+	// active input doesn't get destroyed mid-keystroke (which would
+	// otherwise drop focus — e.g. typing in highlight's opacity field).
+	var syncOnly = function()
+	{
+		syncTextarea();
+		setDirty(true);
+	};
+
+	// Convenience: append a step and scroll into view.
+	var appendStep = function(step)
+	{
+		data.steps.push(step);
+		refresh();
+		stepList.scrollTop = stepList.scrollHeight;
+	};
+
+	// ============================================================
+	// Drag-and-drop
+	// ============================================================
+
+	// Drag state — sourceIndex into data.steps. Cleared on dragend.
+	var dragState = null;
+
+	var makeDragHandle = function(row, index)
+	{
+		var handle = document.createElement('span');
+		handle.style.cssText = 'flex:0 0 14px;text-align:center;font-size:14px;' +
+			'line-height:1;color:light-dark(#86868b,#86868b);cursor:grab;' +
+			'user-select:none';
+		handle.title = mxResources.get('reorder', null, 'Drag to reorder');
+		handle.textContent = '⋮⋮';
+
+		handle.addEventListener('mousedown', function()
+		{
+			row.draggable = true;
+		});
+
+		handle.addEventListener('mouseup', function()
+		{
+			row.draggable = false;
+		});
+
+		row.addEventListener('dragstart', function(e)
+		{
+			dragState = {sourceIndex: index};
+			e.dataTransfer.effectAllowed = 'move';
+			e.dataTransfer.setData('text/plain', 'animstep');
+			row.style.opacity = '0.4';
+		});
+
+		row.addEventListener('dragend', function()
+		{
+			row.draggable = false;
+			row.style.opacity = '';
+			var rows = stepList.querySelectorAll('div');
+			for (var i = 0; i < rows.length; i++)
+			{
+				rows[i].style.borderTop = '';
+				rows[i].style.borderBottom = '';
+			}
+			dragState = null;
+		});
+
+		return handle;
+	};
+
+	var attachDropTarget = function(row, targetIndex)
+	{
+		row.addEventListener('dragover', function(e)
+		{
+			if (dragState == null) return;
+
+			var rect = row.getBoundingClientRect();
+			var insertAfter = e.clientY > rect.top + rect.height / 2;
+			var insertAt = insertAfter ? targetIndex + 1 : targetIndex;
+			var s = dragState.sourceIndex;
+
+			// No-op zone: dropping in the slot the source already occupies.
+			if (insertAt == s || insertAt == s + 1)
+			{
+				row.style.borderTop = '';
+				row.style.borderBottom = '';
+				return;
+			}
+
+			e.preventDefault();
+			e.dataTransfer.dropEffect = 'move';
+			row._dropInsertAt = insertAt;
+
+			var color = 'light-dark(#007aff,#0a84ff)';
+
+			if (insertAfter)
+			{
+				row.style.borderTop = '';
+				row.style.borderBottom = '2px solid ' + color;
+			}
+			else
+			{
+				row.style.borderBottom = '';
+				row.style.borderTop = '2px solid ' + color;
+			}
+		});
+
+		row.addEventListener('dragleave', function()
+		{
+			row.style.borderTop = '';
+			row.style.borderBottom = '';
+		});
+
+		row.addEventListener('drop', function(e)
+		{
+			if (dragState == null) return;
+			e.preventDefault();
+			e.stopPropagation();
+			row.style.borderTop = '';
+			row.style.borderBottom = '';
+
+			var s = dragState.sourceIndex;
+			var insertAt = (row._dropInsertAt != null) ?
+				row._dropInsertAt : targetIndex;
+
+			if (insertAt == s || insertAt == s + 1) return;
+
+			var step = data.steps.splice(s, 1)[0];
+			if (s < insertAt) insertAt--;
+			data.steps.splice(insertAt, 0, step);
+			refresh();
+		});
+	};
+
+	// Shared button factory — keeps row icons consistent. enabled=false renders
+	// a dimmed non-clickable button (used for ↑ on the first row, ↓ on the last).
+	var makeIconButton = function(label, title, enabled, fn)
+	{
+		var b = document.createElement('button');
+		b.type = 'button';
+		b.title = title;
+		b.style.cssText = 'flex:0 0 22px;height:22px;line-height:1;padding:0;' +
+			'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:3px;' +
+			'background:transparent;cursor:pointer;font-size:14px;' +
+			'color:light-dark(#1d1d1f,#e0e0e0)';
+
+		if (!enabled)
+		{
+			b.disabled = true;
+			b.style.opacity = '0.3';
+			b.style.cursor = 'default';
+		}
+
+		mxUtils.write(b, label);
+
+		if (enabled)
+		{
+			b.addEventListener('click', fn);
+		}
+
+		return b;
+	};
+
+	// Image-icon variant of makeIconButton (uses <img> child).
+	var makeImgButton = function(src, title, fn)
+	{
+		var b = makeIconButton('', title, true, fn);
+		var img = document.createElement('img');
+		img.className = 'geAdaptiveAsset';
+		img.setAttribute('src', src);
+		img.style.cssText = 'width:14px;height:14px;vertical-align:middle';
+		b.appendChild(img);
+		return b;
+	};
+
+	// Common number-input styling for inline parameter editing.
+	var inlineNumberInput = function(value, opts)
+	{
+		opts = opts || {};
+		var inp = document.createElement('input');
+		inp.type = 'number';
+		if (opts.min != null) inp.min = opts.min;
+		if (opts.max != null) inp.max = opts.max;
+		if (opts.step != null) inp.step = opts.step;
+		if (opts.placeholder != null) inp.placeholder = opts.placeholder;
+		if (value != null) inp.value = value;
+		// Hide the native spinner buttons — they ate ~16-20px of the
+		// declared width on WebKit/Firefox, making the visible editable
+		// area uselessly small. The .geNoSpin class (installed in
+		// installCustomActionStyles) zeroes the appearance on both engines.
+		inp.className = 'geNoSpin';
+		// No inline width — .geNoSpin caps everything at 60px and lets
+		// the browser size to the natural content. Per-field `opts.width`
+		// hints from the schemas are ignored.
+		inp.style.cssText = 'padding:2px 4px;' +
+			'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:3px;' +
+			'background:light-dark(#ffffff,#1c1c1e);' +
+			'color:light-dark(#1d1d1f,#e0e0e0)';
+
+		return inp;
+	};
+
+	// Appends a "select cells" button. Resolves the step's selector against
+	// the graph (cells/tags/excludeCells / wildcard) and selects those cells.
+	// Renders the step's cells + tags as polished chips with inline
+	// Use Selection / Show on Canvas buttons. Replaces both the old
+	// text-only target label and the standalone select-cells button.
+	var appendStepSelectors = function(row, idx, key, sel)
+	{
+		if (sel == null) return;
+
+		var wrap = document.createElement('span');
+		wrap.style.cssText = 'display:inline-flex;align-items:center;' +
+			'flex:1 1 auto;min-width:0;gap:6px';
+
+		// Helper: getter/setter pair for a specific field on this step's
+		// selector object. Mirrors how CustomActionDialog binds chips.
+		var bind = function(field)
+		{
+			return {
+				get: function()
+				{
+					var s = data.steps[idx] && data.steps[idx][key];
+					return (s && Array.isArray(s[field])) ? s[field] : null;
+				},
+				set: function(v)
+				{
+					var s = data.steps[idx][key];
+					if (!s || typeof s != 'object')
+					{
+						s = data.steps[idx][key] = {};
+					}
+					if (!v || !v.length) delete s[field];
+					else s[field] = v;
+					refresh();
+				}
+			};
+		};
+
+		var tagsBind = bind('tags');
+		var tagsGetMode = function()
+		{
+			var s = data.steps[idx] && data.steps[idx][key];
+			return (s && s.tagsMatch === 'or') ? 'or' : 'and';
+		};
+		var tagsSetMode = function(m)
+		{
+			var s = data.steps[idx][key];
+			if (!s || typeof s != 'object')
+			{
+				s = data.steps[idx][key] = {};
+			}
+			if (m === 'or') s.tagsMatch = 'or';
+			else delete s.tagsMatch;
+			refresh();
+		};
+
+		var layersBind = bind('layers');
+
+		// "Select layers" shows for every cell-targeting action (allowLayers
+		// in SCHEMAS); the layer resolves to its contained cells at playback.
+		var keySchema = CustomActionDialog.SCHEMAS[key];
+		var extraItems = [];
+
+		if (keySchema != null && keySchema.allowLayers)
+		{
+			extraItems.push({
+				// "…" suffix marks items that open a follow-up dialog
+				// (the layer picker popover), matching the UI convention
+				// used elsewhere in drawio. Appended at the call site so
+				// the resource string ("Select layers") can be reused as
+				// a popover title without the ellipsis.
+				label: mxResources.get('selectLayers',
+					null, 'Select layers') + '…',
+				disabled: function()
+				{
+					return graph.getModel().getChildCount(
+						graph.getModel().getRoot()) == 0;
+				},
+				onClick: function(chipEl)
+				{
+					selectorChips.openLayerPicker(chipEl,
+						layersBind.get, layersBind.set);
+				}
+			});
+		}
+
+		extraItems.push({
+			// "…" suffix — opens the tag picker popover. Same convention
+			// as selectLayers above.
+			label: mxResources.get('selectByTags',
+				null, 'Select by tags') + '…',
+			onClick: function(chipEl)
+			{
+				selectorChips.openTagPicker(chipEl,
+					tagsBind.get, tagsBind.set,
+					tagsGetMode, tagsSetMode);
+			}
+		});
+
+		extraItems.push({
+			label: mxResources.get('excludeSelection',
+				null, 'Exclude selected cells'),
+			disabled: function()
+			{
+				return graph.getSelectionCount() == 0;
+			},
+			onClick: function()
+			{
+				var cells = graph.getSelectionCells();
+				if (cells.length == 0) return;
+				var s = data.steps[idx][key];
+				if (!s || typeof s != 'object')
+				{
+					s = data.steps[idx][key] = {};
+				}
+				var existing = Array.isArray(s.excludeCells) ?
+					s.excludeCells.slice() : [];
+				var seen = {};
+				for (var i = 0; i < existing.length; i++)
+				{
+					seen[existing[i]] = true;
+				}
+				for (var i = 0; i < cells.length; i++)
+				{
+					if (!seen[cells[i].id])
+					{
+						existing.push(cells[i].id);
+						seen[cells[i].id] = true;
+					}
+				}
+				s.excludeCells = existing;
+				refresh();
+			}
+		});
+
+		// Cells chip — hosts "Select layers" (when supported), "Select
+		// by tags", and "Exclude selected cells" so the secondary
+		// chips stay hidden until populated.
+		var cellsBind = bind('cells');
+		wrap.appendChild(selectorChips.cellListField('',
+			cellsBind.get, cellsBind.set,
+			{allowWildcard: true, extraMenuItems: extraItems}));
+
+		// Layers chip only when populated.
+		var layersValue = layersBind.get();
+		if (Array.isArray(layersValue) && layersValue.length > 0)
+		{
+			wrap.appendChild(selectorChips.layerListField('',
+				layersBind.get, layersBind.set));
+		}
+
+		// Tags chip only when populated.
+		var tagsValue = tagsBind.get();
+		if (Array.isArray(tagsValue) && tagsValue.length > 0)
+		{
+			wrap.appendChild(selectorChips.tagListField('',
+				tagsBind.get, tagsBind.set,
+				{getMode: tagsGetMode, setMode: tagsSetMode}));
+		}
+
+		// Exclude chip only when populated.
+		var excludeBind = bind('excludeCells');
+		var excludeValue = excludeBind.get();
+		if (Array.isArray(excludeValue) && excludeValue.length > 0)
+		{
+			wrap.appendChild(selectorChips.cellListField('',
+				excludeBind.get, excludeBind.set,
+				{allowWildcard: false,
+				 singularKey: 'excluded', pluralKey: 'excluded',
+				 singularFallback: 'Excluded', pluralFallback: 'Excluded'}));
+		}
+
+		row.appendChild(wrap);
+	};
+
+	// Each JSON step renders as one row — the "cells" array inside a step is
+	// inherently parallel, so multi-cell picks already collapse into one entry.
+	var renderList = function()
+	{
+		stepList.innerHTML = '';
+
+		if (data.steps.length == 0)
+		{
+			var empty = document.createElement('div');
+			empty.style.cssText = 'padding:12px;text-align:center;' +
+				'color:light-dark(#86868b,#86868b);font-size:12px';
+			mxUtils.write(empty, mxResources.get('none', null, 'None'));
+			stepList.appendChild(empty);
+			return;
+		}
+
+		for (var i = 0; i < data.steps.length; i++)
+		{
+			stepList.appendChild(makeStepRow(data.steps[i], i,
+				i == data.steps.length - 1));
+		}
+	};
+
+	var rowBase = function(isLast)
+	{
+		var row = document.createElement('div');
+		// min-width:max-content makes the row as wide as its content
+		// when content exceeds the stepList width — the stepList then
+		// shows a horizontal scrollbar (overflow:auto). When stepList
+		// is wide, the spacer between chips and inputs grows to push
+		// inputs to the right edge. No overflow:hidden so nothing
+		// clips; the scrollbar keeps everything reachable.
+		row.style.cssText = 'display:flex;align-items:center;gap:6px;' +
+			'min-width:max-content;' +
+			'padding:6px 4px;border-radius:4px;' +
+			'border-bottom:1px solid light-dark(rgba(0,0,0,0.05),rgba(255,255,255,0.05))';
+
+		if (isLast)
+		{
+			row.style.borderBottom = 'none';
+		}
+
+		return row;
+	};
+
+	// Inserted between the action label / selector chips (left side)
+	// and the input fields (right side). flex:1 grabs all leftover
+	// width when the row is wider than its content; collapses to 0
+	// when the row is at min-width:max-content (narrow stepList).
+	var appendSpacer = function(row)
+	{
+		var sp = document.createElement('span');
+		sp.style.cssText = 'flex:1 1 auto;min-width:0';
+		row.appendChild(sp);
+	};
+
+	var appendIcon = function(row, ch)
+	{
+		var icon = document.createElement('span');
+		icon.style.cssText = 'flex:0 0 18px;text-align:center;font-size:14px';
+		mxUtils.write(icon, ch);
+		row.appendChild(icon);
+		return icon;
+	};
+
+	var appendActionLabel = function(row, text)
+	{
+		var action = document.createElement('span');
+		// Fixed 70px slot — long localized labels get truncated with
+		// an ellipsis instead of wrapping; full text stays in tooltip.
+		action.style.cssText = 'flex:0 0 70px;font-weight:500;font-size:12px;' +
+			'white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+		action.title = text;
+		mxUtils.write(action, text);
+		row.appendChild(action);
+	};
+
+	var appendTargetLabel = function(row, sel)
+	{
+		var target = document.createElement('span');
+		target.style.cssText = 'flex:1 1 auto;min-width:0;' +
+			'color:light-dark(#1d1d1f,#e0e0e0);' +
+			'overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+
+		var refs = [];
+		if (sel != null)
+		{
+			if (Array.isArray(sel.cells)) refs = refs.concat(sel.cells);
+			if (Array.isArray(sel.tags)) refs = refs.concat(sel.tags.map(function(t) { return 'tag:' + t; }));
+			if (Array.isArray(sel.layers)) refs = refs.concat(sel.layers.map(function(l) { return 'layer:' + l; }));
+		}
+		target.title = refs.join(', ');
+		mxUtils.write(target, formatSelectorText(sel));
+		row.appendChild(target);
+	};
+
+	// Resolves a tooltip from a field spec (titleKey > title > placeholder).
+	// Same priority as appendField in CustomActionDialog.
+	var resolveFieldTitle = function(spec)
+	{
+		if (spec.titleKey != null)
+		{
+			return mxResources.get(spec.titleKey, null, spec.title || '');
+		}
+		if (spec.title != null) return spec.title;
+		if (spec.placeholderKey != null)
+		{
+			return mxResources.get(spec.placeholderKey,
+				null, spec.placeholder || '');
+		}
+		if (spec.placeholder != null) return spec.placeholder;
+		return null;
+	};
+
+	// Renders one schema field into the step row. Mirrors appendField in
+	// CustomActionDialog but uses the AnimationDialog's inline styling so
+	// the row layout stays tight and consistent with existing step types.
+	var renderStepField = function(row, idx, key, spec, isPrimary)
+	{
+		// getter/setter for nested {key: {field: value}} (object actions)
+		// or top-level (primary actions like wait). Uses syncOnly() (not
+		// refresh()) so inline edits don't tear down the row mid-keystroke
+		// — keeps focus alive when typing into number/text/color inputs.
+		var get, set;
+
+		if (isPrimary)
+		{
+			get = function() { return data.steps[idx][key]; };
+			set = function(v)
+			{
+				if (v == null || v === '')
+				{
+					// Numbers fall back to 0 (matches the legacy wait
+					// input — never store '' as a numeric primary).
+					data.steps[idx][key] = (spec.type == 'number') ? 0 : '';
+				}
+				else
+				{
+					data.steps[idx][key] = v;
+				}
+				syncOnly();
+			};
+		}
+		else
+		{
+			get = function()
+			{
+				var s = data.steps[idx][key];
+				return (s != null && typeof s == 'object') ? s[spec.name] : undefined;
+			};
+			set = function(v)
+			{
+				var s = data.steps[idx][key];
+				if (s == null || typeof s != 'object')
+				{
+					s = data.steps[idx][key] = {};
+				}
+				if (v == null || v === '') delete s[spec.name];
+				else s[spec.name] = v;
+				syncOnly();
+			};
+		}
+
+		var title = resolveFieldTitle(spec);
+
+		// Checkbox — boolean field, set to `true` when checked, removed
+		// from the JSON when not (so the action stays tidy).
+		if (spec.type == 'checkbox')
+		{
+			var wrap = document.createElement('label');
+			wrap.style.cssText = 'flex:0 0 auto;display:inline-flex;' +
+				'align-items:center;gap:4px;cursor:pointer;font-size:12px;' +
+				'color:light-dark(#1d1d1f,#e0e0e0);user-select:none';
+			if (title) wrap.title = title;
+
+			var cb = document.createElement('input');
+			cb.type = 'checkbox';
+			cb.checked = !!get();
+			cb.style.cssText = 'margin:0;accent-color:' +
+				'light-dark(#0071e3,#0a84ff)';
+			cb.addEventListener('change', function()
+			{
+				if (cb.checked) set(true);
+				else set(undefined);
+			});
+			wrap.appendChild(cb);
+
+			if (spec.labelKey || spec.label)
+			{
+				var txt = document.createElement('span');
+				mxUtils.write(txt, spec.labelKey ?
+					mxResources.get(spec.labelKey, null, spec.label || '') :
+					(spec.label || ''));
+				wrap.appendChild(txt);
+			}
+			row.appendChild(wrap);
+			return;
+		}
+
+		// TagList — uses selectorChips to render a chip + popover.
+		if (spec.type == 'tagList')
+		{
+			var lblText = spec.labelKey ?
+				mxResources.get(spec.labelKey, null, spec.label || '') :
+				(spec.label || '');
+			var modeBinding = spec.modeField ? {
+				getMode: function()
+				{
+					var s = data.steps[idx][key];
+					return (s && s[spec.modeField] === 'or') ? 'or' : 'and';
+				},
+				setMode: function(m)
+				{
+					var s = data.steps[idx][key];
+					if (s == null || typeof s != 'object')
+					{
+						s = data.steps[idx][key] = {};
+					}
+					if (m === 'or') s[spec.modeField] = 'or';
+					else delete s[spec.modeField];
+					syncOnly();
+				}
+			} : null;
+			row.appendChild(selectorChips.tagListField(lblText, get,
+				function(v)
+				{
+					if (!Array.isArray(v) || v.length == 0) set(undefined);
+					else set(v);
+				}, modeBinding || undefined));
+			return;
+		}
+
+		// Select dropdown
+		if (spec.type == 'select')
+		{
+			var sel = document.createElement('select');
+			sel.style.cssText = 'flex:0 0 auto;padding:2px 4px;' +
+				'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:3px;' +
+				'background:light-dark(#ffffff,#1c1c1e);' +
+				'color:light-dark(#1d1d1f,#e0e0e0)';
+			for (var i = 0; i < spec.options.length; i++)
+			{
+				var o = document.createElement('option');
+				o.value = spec.options[i].value;
+				o.textContent = spec.options[i].label;
+				sel.appendChild(o);
+			}
+			var cur = get();
+			if (cur != null) sel.value = String(cur);
+			if (title) sel.title = title;
+			sel.addEventListener('change', function()
+			{
+				var v = sel.value;
+				if (v === '') set(undefined);
+				else if (v === 'true') set(true);
+				else if (v === 'false') set(false);
+				else set(v);
+			});
+			row.appendChild(sel);
+			if (spec.label)
+			{
+				var lbl = document.createElement('span');
+				lbl.style.cssText = 'flex:0 0 auto;color:light-dark(#6e6e73,#a0a0a0);font-size:11px';
+				mxUtils.write(lbl, spec.label);
+				row.appendChild(lbl);
+			}
+			return;
+		}
+
+		// Number / text / color — share the same inline input shape, but
+		// number gets the existing inlineNumberInput visual treatment.
+		var inp;
+
+		if (spec.type == 'number')
+		{
+			var placeholder = (spec.placeholderKey != null) ?
+				mxResources.get(spec.placeholderKey,
+					null, spec.placeholder || '') :
+				spec.placeholder;
+			inp = inlineNumberInput(get(),
+				{min: spec.min, max: spec.max, step: spec.step,
+				 width: spec.width || 55, placeholder: placeholder});
+		}
+		else
+		{
+			inp = document.createElement('input');
+			inp.type = spec.type || 'text';
+			// Default widths kept tight so step rows stay one-line at
+			// typical dialog widths; schemas can override per field.
+			var w = spec.width || (spec.type == 'color' ? 36 : 80);
+
+			if (spec.type == 'color')
+			{
+				inp.style.cssText = 'flex:0 0 ' + w + 'px;min-width:0;' +
+					'height:22px;padding:1px;cursor:pointer;' +
+					'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:3px;' +
+					'background:light-dark(#ffffff,#1c1c1e)';
+			}
+			else
+			{
+				inp.style.cssText = 'flex:0 0 ' + w + 'px;min-width:0;padding:2px 4px;' +
+					'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:3px;' +
+					'background:light-dark(#ffffff,#1c1c1e);' +
+					'color:light-dark(#1d1d1f,#e0e0e0)';
+			}
+
+			var placeholder = (spec.placeholderKey != null) ?
+				mxResources.get(spec.placeholderKey,
+					null, spec.placeholder || '') :
+				spec.placeholder;
+			if (placeholder) inp.placeholder = placeholder;
+			var cur = get();
+			if (cur != null) inp.value = String(cur);
+		}
+
+		if (title) inp.title = title;
+
+		var commit = function()
+		{
+			var v = inp.value;
+			if (spec.type == 'number')
+			{
+				if (v === '') { set(undefined); return; }
+				var n = parseFloat(v);
+				if (isNaN(n)) { set(undefined); return; }
+				set(n);
+			}
+			else
+			{
+				set(v === '' ? undefined : v);
+			}
+		};
+		inp.addEventListener('change', commit);
+		inp.addEventListener('input', commit);
+		row.appendChild(inp);
+
+		if (spec.label)
+		{
+			var lbl = document.createElement('span');
+			lbl.style.cssText = 'flex:0 0 auto;color:light-dark(#6e6e73,#a0a0a0);font-size:11px';
+			mxUtils.write(lbl, spec.label);
+			row.appendChild(lbl);
+		}
+	};
+
+	// Renders one JSON step as a row. Each step is its own row — multi-cell
+	// parallel effects are encoded as one step with cells: [A,B,C], so no
+	// grouping/expanding logic is needed in the UI.
+	var makeStepRow = function(step, idx, isLast)
+	{
+		var info = stepLabel(step);
+		var key = getStepKey(step);
+		var schema = (key != null) ? CustomActionDialog.SCHEMAS[key] : null;
+		var sel = getStepSel(step);
+		var row = rowBase(isLast);
+
+		// Carry the step index so setPlayingStep() can find this row
+		// and toggle the active-step highlight without a full re-render.
+		// `playingSteps` is a Set so all rows in a parallel batch (the
+		// current step + any consecutive `immediate: true` followers) can
+		// highlight simultaneously while their effects play.
+		row.setAttribute('data-step-idx', idx);
+		if (playingSteps.has(idx)) row.classList.add('geAnimationStepActive');
+
+		row.appendChild(makeDragHandle(row, idx));
+		attachDropTarget(row, idx);
+
+		// "Immediate" toggle — when active, this step runs in parallel
+		// with the previous step (sets `immediate: true` at the step root).
+		// The default is sequential (this step waits for the previous step's
+		// blocking effects to finish). Hidden on the first step via
+		// visibility:hidden so the row layout stays consistent — there's
+		// nothing to be parallel with at idx 0. The button's icon AND
+		// tooltip swap to reflect state: ⏩ + "Immediate" when on (this
+		// step skips the wait), ⏱ + "Wait" when off (this step waits
+		// for the previous one to finish). Both glyphs carry the U+FE0E
+		// variation selector to force monochrome text presentation —
+		// otherwise the system font renders them as colorful emoji,
+		// which clashes with the surrounding monochrome UI.
+		var immediateBtn = document.createElement('button');
+		immediateBtn.type = 'button';
+		var applyImmediateIcon = function()
+		{
+			immediateBtn.textContent = '';
+			if (step.immediate === true)
+			{
+				mxUtils.write(immediateBtn, '⏩︎');
+				immediateBtn.title = mxResources.get('immediate',
+					null, 'Immediate');
+			}
+			else
+			{
+				mxUtils.write(immediateBtn, '⏱︎');
+				immediateBtn.title = mxResources.get('wait',
+					null, 'Wait');
+			}
+		};
+		// Force monochrome rendering for the ⏩ / ⏱ glyphs:
+		//   1. `font-variant-emoji: text` + the U+FE0E text-variation
+		//      selector in the string ask the browser for text rendering.
+		//   2. The "Segoe UI Symbol" / "Apple Symbols" font-family list
+		//      prefers the monochrome symbol fonts on each platform.
+		//   3. `filter: grayscale(1)` is the safety net — Windows Chrome
+		//      ignores the variation selector for ⏩ specifically (it
+		//      always pulls Segoe UI Emoji's blue colour-glyph), so we
+		//      desaturate the rendered pixels as a last resort. Harmless
+		//      for already-monochrome glyphs.
+		immediateBtn.style.cssText = 'flex:0 0 22px;height:22px;line-height:1;' +
+			'padding:0;border:1px solid light-dark(#d2d2d7,#48484a);' +
+			'border-radius:3px;background:transparent;cursor:pointer;' +
+			'font-size:14px;color:light-dark(#1d1d1f,#e0e0e0);' +
+			'font-family:"Segoe UI Symbol","Apple Symbols",sans-serif;' +
+			'font-variant-emoji:text;filter:grayscale(1) contrast(2)';
+		applyImmediateIcon();
+		if (idx === 0)
+		{
+			immediateBtn.style.visibility = 'hidden';
+		}
+		immediateBtn.addEventListener('click', function()
+		{
+			if (step.immediate === true)
+			{
+				delete data.steps[idx].immediate;
+				step.immediate = undefined;
+			}
+			else
+			{
+				data.steps[idx].immediate = true;
+				step.immediate = true;
+			}
+			applyImmediateIcon();
+			syncOnly();
+		});
+		row.appendChild(immediateBtn);
+
+		appendIcon(row, info.icon);
+		appendActionLabel(row, info.text);
+
+		if (schema != null && schema.primary != null)
+		{
+			// Primary-value action (wait, open). Spacer pushes the
+			// single input over to the right edge of the row, in line
+			// with the input column of object-shaped actions below.
+			appendSpacer(row);
+			renderStepField(row, idx, key, schema.primary, true);
+		}
+		else
+		{
+			// Object-shaped action. Render selector chips first (left
+			// side); insert a spacer; then render the schema fields
+			// (right side) — so chips and inputs occupy opposite ends
+			// of the row regardless of how many fields exist.
+			if (schema == null || schema.selector)
+			{
+				appendStepSelectors(row, idx, key, sel);
+			}
+
+			appendSpacer(row);
+
+			if (schema != null && Array.isArray(schema.fields))
+			{
+				for (var f = 0; f < schema.fields.length; f++)
+				{
+					renderStepField(row, idx, key, schema.fields[f], false);
+				}
+			}
+
+			// Fallback duration input for animated effects whose schema
+			// has no `delay` field — keeps wipeIn/wipeOut/popIn/popOut/
+			// flow rows actionable without forcing the user into raw
+			// JSON mode. fadeIn/fadeOut/fadeTo already have a `delay`
+			// field in their schema so this branch skips them.
+			if (schema != null && schema.selector &&
+				(key == 'wipeIn' || key == 'wipeOut' ||
+				 key == 'popIn'  || key == 'popOut'))
+			{
+				// Wipe/pop engine default is 30 frames × 30ms ≈ 900ms
+				// (see Graph.prototype.executeAnimations).
+				var durInput = inlineNumberInput(sel.delay,
+					{min: 0, step: 100, width: 55, placeholder: '900'});
+				durInput.title = mxResources.get('duration', null, 'Duration (ms)');
+				durInput.addEventListener('change', function()
+				{
+					var ms = parseFloat(durInput.value);
+					var d = (durInput.value === '' || isNaN(ms) || ms < 0) ? undefined : ms;
+					if (d == null) delete data.steps[idx][key].delay;
+					else data.steps[idx][key].delay = d;
+					syncOnly();
+				});
+				row.appendChild(durInput);
+
+				var msLbl = document.createElement('span');
+				msLbl.style.cssText = 'flex:0 0 auto;color:light-dark(#6e6e73,#a0a0a0);font-size:11px';
+				mxUtils.write(msLbl, 'ms');
+				row.appendChild(msLbl);
+			}
+
+			// "Use Current" affordance for viewbox — re-captures the
+			// current canvas viewport into the action's x/y/width/height.
+			// Picker-time defaults already pre-fill these, but the user
+			// often pans/zooms after adding the step and wants to update
+			// without retyping. The button updates the stored values and
+			// re-renders so the inputs show the new numbers.
+			if (key == 'viewbox')
+			{
+				var useCurrentBtn = document.createElement('button');
+				useCurrentBtn.type = 'button';
+				useCurrentBtn.className = 'geBtn';
+				useCurrentBtn.style.cssText = 'flex:0 0 auto;' +
+					'padding:2px 8px;font-size:11px;min-width:0';
+				useCurrentBtn.textContent = mxResources.get('useCurrent', null, 'Use Current');
+				useCurrentBtn.title = useCurrentBtn.textContent;
+				useCurrentBtn.addEventListener('click', function(e)
+				{
+					e.preventDefault();
+					var vp = captureCurrentViewport();
+					var s = data.steps[idx].viewbox;
+					if (s == null || typeof s != 'object')
+					{
+						s = data.steps[idx].viewbox = {};
+					}
+					s.x = vp.x;
+					s.y = vp.y;
+					s.width = vp.width;
+					s.height = vp.height;
+					if (s.border == null) s.border = vp.border;
+					refresh();  // re-render so inputs reflect the new numbers
+				});
+				row.appendChild(useCurrentBtn);
+			}
+		}
+
+		// Preview — execute just this one step inside the shared
+		// preview session, so the original opacity stays captured for
+		// Reset to restore. (No margin-left:auto needed — the spacer
+		// inserted between selector chips and fields already pushes
+		// the right side of the row out to the edge.)
+		var previewIconBtn = makeIconButton('▶',
+			mxResources.get('preview', null, 'Preview'),
+			true, function()
+			{
+				startPreviewSession();
+				var single = JSON.parse(JSON.stringify(
+					Graph.flattenAnimationActions([step])));
+				graph.executeCustomActions(single);
+			});
+		row.appendChild(previewIconBtn);
+
+		row.appendChild(makeImgButton(Editor.trashImage,
+			mxResources.get('delete'), function()
+			{
+				data.steps.splice(idx, 1);
+				refresh();
+			}));
+
+		return row;
+	};
+
+	// Toggle between list and textarea
+	advancedCheckbox.addEventListener('change', function()
+	{
+		if (advancedCheckbox.checked)
+		{
+			stepList.style.display = 'none';
+			list.style.display = 'block';
+			// Re-check validity so the error reflects the visible textarea.
+			validateTextarea();
+		}
+		else
+		{
+			list.style.display = 'none';
+			stepList.style.display = 'block';
+			// The list view is driven by the (always valid) data, so a
+			// stale textarea parse error is irrelevant while it's hidden.
+			showJsonError(null);
+			renderList();
+		}
+	});
+
+	// In advanced (raw JSON) mode, every keystroke re-parses the textarea and
+	// updates the canonical state. Invalid JSON is held in the textarea until
+	// it parses cleanly — the list view stays on the last good state.
+	list.addEventListener('input', function()
+	{
+		setDirty(true);
+
+		try
+		{
+			var parsed = Editor.parseAnimationData(list.value);
+
+			if (parsed != null && Array.isArray(parsed.steps))
+			{
+				data = parsed;
+				showJsonError(null);
+
+				// Sync the Loop / Disabled checkboxes if the user edited
+				// the raw JSON. parseAnimationData normalizes both to
+				// booleans (defaulting to true); the Disabled checkbox is
+				// the inverse of `enabled`.
+				if (loopCheckbox != null)
+				{
+					loopCheckbox.checked = !!data.loop;
+				}
+				if (disabledCheckbox != null)
+				{
+					disabledCheckbox.checked = !data.enabled;
+				}
+
+				if (!advancedCheckbox.checked)
+				{
+					renderList();
+				}
+			}
+		}
+		catch (e)
+		{
+			// Surface the parse error and mark invalid (Save is blocked).
+			// data is intentionally left at the last valid state so an
+			// in-progress typo doesn't wipe the user's steps.
+			showJsonError(mxResources.get('error', null, 'Error') +
+				': ' + e.message);
+		}
+	});
+
+	renderList();
+
+	// "Add step" section — single grouped dropdown of every available
+	// action type. Mirrors the CustomActionDialog picker so both dialogs
+	// share the same look. No radio for "Selection / All cells" — the
+	// picker handler defaults to the current canvas selection if one
+	// exists, otherwise to the wildcard `*` (all cells).
+	var addSection = document.createElement('div');
+	addSection.className = 'geDialogSection';
+	addSection.style.cssText = 'margin-top:10px;margin-bottom:0;flex:0 0 auto;' +
+		'display:flex;flex-direction:column;gap:8px';
+
+	var pickRow = document.createElement('div');
+	pickRow.style.cssText = 'display:flex;align-items:center;gap:8px;flex-wrap:wrap';
+	addSection.appendChild(pickRow);
+
+	var pickSelect = document.createElement('select');
+	pickSelect.style.cssText = 'flex:1 1 200px;min-width:180px;padding:5px 6px;' +
+		'border:1px solid light-dark(#d2d2d7,#48484a);border-radius:4px;' +
+		'background:light-dark(#ffffff,#1c1c1e);' +
+		'color:light-dark(#1d1d1f,#e0e0e0);font-size:13px';
+
+	// Placeholder option — selected by default, can't be picked as a real
+	// step. After picking a real option we reset back to this. Localized
+	// labels register a refresher so the picker re-localizes on language
+	// change (collected at the bottom of the picker construction).
+	var pickerL10n = [];
+
+	var placeholderOpt = document.createElement('option');
+	placeholderOpt.value = '';
+	placeholderOpt.disabled = true;
+	placeholderOpt.selected = true;
+	// Placeholder reads "Add…" (Unicode ellipsis) — the resource is
+	// reused from elsewhere in drawio without the trailing dots, so we
+	// append the ellipsis here. A dedicated refresher rebuilds the
+	// label on language change instead of going through the generic
+	// pickerL10n array (which only does a plain assignment).
+	var applyAddPlaceholder = function()
+	{
+		placeholderOpt.textContent =
+			mxResources.get('add', null, 'Add') + '…';
+	};
+	applyAddPlaceholder();
+	staticRefreshers.push(applyAddPlaceholder);
+	pickSelect.appendChild(placeholderOpt);
+
+	// Same grouping as the CustomActionDialog picker so both dialogs offer
+	// the same vocabulary in the same order. Every action type listed in
+	// SCHEMAS is available — including viewbox, scroll, highlight, etc.
+	var pickerGroups = [
+		{labelKey: 'visibilityActions', label: 'Visibility',
+			keys: ['toggle', 'show', 'hide']},
+		{labelKey: 'effects',           label: 'Effects',
+			keys: ['fadeIn', 'fadeOut', 'fadeTo',
+			       'wipeIn', 'wipeOut', 'popIn', 'popOut']},
+		{labelKey: 'style',             label: 'Style',
+			keys: ['opacity', 'style', 'toggleStyle', 'highlight', 'flow']},
+		{labelKey: 'navigation',        label: 'Navigation',
+			keys: ['select', 'scroll', 'viewbox', 'open']},
+		{labelKey: 'tags',              label: 'Tags',
+			keys: ['tags']},
+		{labelKey: 'timing',            label: 'Timing',
+			keys: ['wait']}
+	];
+
+	for (var gi = 0; gi < pickerGroups.length; gi++)
+	{
+		var og = document.createElement('optgroup');
+		og.label = mxResources.get(pickerGroups[gi].labelKey,
+			null, pickerGroups[gi].label);
+		pickerL10n.push({el: og, prop: 'label',
+			key: pickerGroups[gi].labelKey,
+			fallback: pickerGroups[gi].label});
+
+		for (var ki = 0; ki < pickerGroups[gi].keys.length; ki++)
+		{
+			var pk = pickerGroups[gi].keys[ki];
+			var schema = CustomActionDialog.SCHEMAS[pk];
+			if (schema == null) continue;
+			var o = document.createElement('option');
+			o.value = pk;
+			// schema.labelKey overrides the default key→resource lookup
+			// (used by viewbox → `view`).
+			var resKey = schema.labelKey || pk;
+			o.textContent = mxResources.get(resKey, null, schema.label);
+			pickerL10n.push({el: o, prop: 'textContent',
+				key: resKey, fallback: schema.label});
+			og.appendChild(o);
+		}
+		pickSelect.appendChild(og);
+	}
+
+	// Destructive entry: clears every step. Lives in its own divider
+	// optgroup so it sits below all the action types. The CSS class
+	// `geDeleteOpt` paints it red.
+	var dangerGroup = document.createElement('optgroup');
+	dangerGroup.label = '──────';
+	var deleteAllOpt = document.createElement('option');
+	deleteAllOpt.value = '__deleteAll__';
+	deleteAllOpt.className = 'geDeleteOpt';
+	deleteAllOpt.textContent = mxResources.get('deleteAll', null, 'Delete All');
+	pickerL10n.push({el: deleteAllOpt, prop: 'textContent',
+		key: 'deleteAll', fallback: 'Delete All'});
+	dangerGroup.appendChild(deleteAllOpt);
+	pickSelect.appendChild(dangerGroup);
+
+	staticRefreshers.push(function()
+	{
+		for (var i = 0; i < pickerL10n.length; i++)
+		{
+			var b = pickerL10n[i];
+			b.el[b.prop] = mxResources.get(b.key, null, b.fallback);
+		}
+	});
+
+	pickRow.appendChild(pickSelect);
+
+	div.appendChild(addSection);
+
+	// Reads the visible canvas window in graph coordinates — same math as
+	// the CustomActionDialog's Use Current button, used to pre-fill a
+	// viewbox step with the current viewport on pick.
+	var captureCurrentViewport = function()
+	{
+		var view = graph.view;
+		var container = graph.container;
+		var scale = view.scale;
+		var t = view.translate;
+
+		return {
+			x: Math.round(container.scrollLeft / scale - t.x),
+			y: Math.round(container.scrollTop  / scale - t.y),
+			width: Math.round(container.clientWidth  / scale),
+			height: Math.round(container.clientHeight / scale),
+			border: 0
+		};
+	};
+
+	// Builds one JSON step for the picked action key, driven by SCHEMAS.
+	// Multi-cell picks collapse into one step with cells: [A, B, C] —
+	// inherently parallel.
+	var buildStepObject = function(key, cellRefs)
+	{
+		var schema = CustomActionDialog.SCHEMAS[key];
+		if (schema == null) return null;
+
+		var step = {};
+
+		if (schema.primary != null)
+		{
+			// Standalone scalar action (e.g. wait, open).
+			var def = schema.primary.def;
+			step[key] = (def != null) ?
+				(schema.primary.type == 'number' ? parseFloat(def) : def) :
+				(schema.primary.type == 'number' ? 0 : '');
+		}
+		else
+		{
+			var sel = {};
+
+			if (schema.selector && Array.isArray(cellRefs) && cellRefs.length > 0)
+			{
+				sel.cells = cellRefs.slice();
+			}
+
+			if (Array.isArray(schema.fields))
+			{
+				for (var i = 0; i < schema.fields.length; i++)
+				{
+					var f = schema.fields[i];
+					if (f.def != null)
+					{
+						sel[f.name] = f.type == 'number' ?
+							parseFloat(f.def) : f.def;
+					}
+				}
+			}
+
+			// Viewbox defaults to the current viewport — same UX as the
+			// CustomActionDialog picker, so picking "Viewbox" is a
+			// one-click snapshot of what you see right now.
+			if (key == 'viewbox')
+			{
+				var vp = captureCurrentViewport();
+				if (sel.x == null) sel.x = vp.x;
+				if (sel.y == null) sel.y = vp.y;
+				if (sel.width == null) sel.width = vp.width;
+				if (sel.height == null) sel.height = vp.height;
+				if (sel.border == null) sel.border = vp.border;
+			}
+
+			step[key] = sel;
+		}
+
+		return step;
+	};
+
+	pickSelect.addEventListener('change', function()
+	{
+		var key = pickSelect.value;
+		pickSelect.value = '';
+
+		if (!key) return;
+
+		// Destructive "Delete All" entry — guarded by editorUi.confirm
+		// since it can't be undone (the dialog's data is the source of
+		// truth; once cleared, the previous list is gone).
+		if (key == '__deleteAll__')
+		{
+			if (data.steps.length == 0) return;
+			editorUi.confirm(mxResources.get('areYouSure', null,
+				'Are you sure?'), function()
+			{
+				data.steps = [];
+				refresh();
+			});
+			return;
+		}
+
+		var schema = CustomActionDialog.SCHEMAS[key];
+		if (schema == null) return;
+
+		// Cell-targeting actions default to the current canvas selection
+		// if any cells are picked, else to the "*" wildcard (all cells).
+		// No alert when selection is empty — the wildcard fallback makes
+		// the picker always succeed.
+		var refs = null;
+
+		if (schema.selector)
+		{
+			var selectionCells = graph.getSelectionCells();
+			refs = (selectionCells.length > 0) ?
+				selectionCells.map(function(c) { return c.id; }) :
+				[Editor.ANIMATION_ALL];
+		}
+
+		var step = buildStepObject(key, refs);
+		if (step != null) appendStep(step);
+	});
+
+	var player = null;
+
+	// Preview "session" — captures the pre-preview opacity of every
+	// referenced cell on the first preview click and persists across
+	// follow-up step previews so the user can stack multiple previews
+	// without losing the original state. Reset wipes the session and
+	// restores opacity in one shot.
+	var previewSession = null;
+
+	// Reset button is enabled only when a preview session is open.
+	// Same pattern as the CustomActionDialog footer.
+	var resetBtnRef = null;
+	var updateResetBtn = function()
+	{
+		if (resetBtnRef == null) return;
+		var enabled = previewSession != null;
+		resetBtnRef.disabled = !enabled;
+		resetBtnRef.style.opacity = enabled ? '' : '0.4';
+		resetBtnRef.style.cursor = enabled ? '' : 'default';
+	};
+
+	var startPreviewSession = function()
+	{
+		if (previewSession != null) return;
+		previewSession = new Editor.AnimationPlayer(graph, data);
+		previewSession.snapshotOpacity();
+		updateResetBtn();
+	};
+
+	var endPreviewSession = function()
+	{
+		if (previewSession == null) return;
+		previewSession.restoreOpacity();
+
+		// Stop flow animation on any edges that may have been touched —
+		// restoreOpacity only resets opacity, not the mxEdgeFlow class.
+		var refs = previewSession.collectReferencedCells();
+		var edges = [];
+		for (var i = 0; i < refs.length; i++)
+		{
+			if (graph.getModel().isEdge(refs[i])) edges.push(refs[i]);
+		}
+		if (edges.length > 0)
+		{
+			Editor.toggleFlowAnimation(graph, edges, 'stop');
+		}
+
+		// Refresh to revert any transient style mutations from the
+		// state-changing actions (toggle / show / hide / style /
+		// toggleStyle in transient mode mutate `state.style` and
+		// `shape.apply/redraw` without touching the model — only a
+		// re-validate clears them). restoreOpacity already wrote the
+		// snapshot back into the DOM, so the inline opacity attributes
+		// survive the refresh (shape.clear strips child SVG nodes but
+		// not the parent group's style attribute).
+		graph.refresh();
+
+		previewSession = null;
+		updateResetBtn();
+	};
+
+	var stopPlayer = function()
+	{
+		if (player != null)
+		{
+			player.stop();
+			player = null;
+		}
+	};
+
+	// Bottom action row — generous margin-top per docs/dialog-style-guide.md
+	// (CustomDialog uses 34px; we use 20px because mxWindow already has
+	// its own title-bar chrome above the content). No flex-wrap here —
+	// the spacer's behavior gets undefined when buttons wrap; the
+	// minimum dialog size (360px) keeps all buttons on one line.
+	var actions = document.createElement('div');
+	actions.style.cssText = 'margin-top:20px;display:flex;gap:6px;flex:0 0 auto';
+
+	// `playingSteps` is hoisted to the top of the function — see comment
+	// there. It tracks the currently-playing step(s) as a Set so a parallel
+	// batch of `immediate: true` steps lights up together (the player calls
+	// `setPlayingStep(startIdx, endIdx)` and every row in that half-open
+	// range gets the active class).
+	var setPlayingStep = function(start, end)
+	{
+		// start === -1 (or any negative value) clears the highlight.
+		var nextSet = new Set();
+		if (start != null && start >= 0)
+		{
+			// end defaults to start+1 (single-step highlight). Callers
+			// running a parallel batch pass the exclusive end so the
+			// whole batch lights up at once.
+			var stop = (end != null) ? end : start + 1;
+			for (var i = start; i < stop; i++) nextSet.add(i);
+		}
+
+		// Skip the DOM walk if the active set is unchanged — avoids
+		// thrashing the row classes on every player tick.
+		if (nextSet.size === playingSteps.size)
+		{
+			var same = true;
+			for (var v of nextSet) if (!playingSteps.has(v)) { same = false; break; }
+			if (same) return;
+		}
+
+		playingSteps = nextSet;
+		var rows = stepList.querySelectorAll('[data-step-idx]');
+		for (var i = 0; i < rows.length; i++)
+		{
+			var rowIdx = parseInt(rows[i].getAttribute('data-step-idx'), 10);
+			rows[i].classList.toggle('geAnimationStepActive',
+				playingSteps.has(rowIdx));
+		}
+	};
+
+	// Help button — opens the end-user manual in a new window.
+	actions.appendChild(editorUi.createHelpIcon(ANIMATION_HELP_URL));
+
+	var thisDialog = this;
+
+	// Persists state for the current mode. Page mode writes JSON to the
+	// model root's animation attribute (omitting it entirely when empty
+	// so the attribute doesn't bloat the file). Action mode calls back
+	// to the host with the full `{title?, steps}` object so the host can
+	// serialize it however it stores the link.
+	var applyChanges = function()
+	{
+		if (kind == 'page')
+		{
+			var root = graph.getModel().getRoot();
+			// Page-level animations don't carry a title — strip it so
+			// the stored JSON stays clean even if the user typed one
+			// before switching to page mode (defensive — page mode
+			// doesn't show the title input).
+			var payload = {steps: data.steps};
+			// Only persist `loop` / `enabled` when they differ from the
+			// default (true). Most diagrams use the defaults; emitting
+			// the field only for opt-outs keeps file size and noise down.
+			if (data.loop === false)
+			{
+				payload.loop = false;
+			}
+			if (data.enabled === false)
+			{
+				payload.enabled = false;
+			}
+			var value = (payload.steps.length > 0) ?
+				JSON.stringify({animation: payload}) : null;
+			graph.setAttributeForCell(root, 'animation', value);
+			// Legacy attribute — cleared since hideInitial is no longer
+			// a runtime concept (the converter prepended explicit
+			// setOpacity steps instead).
+			graph.setAttributeForCell(root, 'animationHideInitial', null);
+		}
+		else if (typeof opts.save == 'function')
+		{
+			opts.save(data);
+		}
+
+		setDirty(false);
+	};
+
+	// Footer layout: secondary actions on the left (Preview, then Reset),
+	// and primary intent on the right (Cancel next to Save) — mirrors
+	// the convention used elsewhere in drawio and avoids "Cancel" being
+	// far from its companion "Save". Preview comes first because it's
+	// the action you take BEFORE Reset (you preview, then optionally
+	// reset to clear the canvas).
+
+	previewBtn = mxUtils.button(mxResources.get('preview'), function()
+	{
+		stopPlayer();
+		startPreviewSession();
+		player = new Editor.AnimationPlayer(graph, data);
+		// The session owns the snapshot. Suppress the player's own
+		// restore-on-done so the canvas stays at the final state until
+		// the user clicks Reset.
+		player.snapshot = [];
+		player.play({
+			done: function() { player = null; setPlayingStep(-1); },
+			// Player calls onStep(start, end) — end is the exclusive
+			// upper bound of the parallel batch, so two-step batches
+			// light up both rows at once. Single-step (sequential)
+			// dispatches have end = start + 1.
+			onStep: function(start, end) { setPlayingStep(start, end); }
+		});
+	});
+	previewBtn.className = 'geBtn';
+	staticRefreshers.push(function()
+	{
+		previewBtn.textContent = mxResources.get('preview');
+		previewBtn.title = mxResources.get('preview');
+	});
+	previewBtn.title = mxResources.get('preview');
+	actions.appendChild(previewBtn);
+
+	// Reset — restores the canvas to its pre-preview state and stops
+	// any running playback. Disabled until a preview session is open.
+	var resetBtn = mxUtils.button(mxResources.get('reset', null, 'Reset'),
+		function()
+		{
+			stopPlayer();
+			setPlayingStep(-1);
+			endPreviewSession();
+		});
+	resetBtn.className = 'geBtn';
+	staticRefreshers.push(function()
+	{
+		var t = mxResources.get('reset', null, 'Reset');
+		resetBtn.textContent = t;
+		resetBtn.title = t;
+	});
+	resetBtn.title = mxResources.get('reset', null, 'Reset');
+	resetBtnRef = resetBtn;
+	updateResetBtn();
+	actions.appendChild(resetBtn);
+
+	var spacer = document.createElement('span');
+	spacer.style.flex = '1 1 auto';
+	actions.appendChild(spacer);
+
+	var cancelBtn = mxUtils.button(mxResources.get('cancel'), function()
+	{
+		// Cancel button: if there are unsaved changes, prompt before
+		// closing (default action is to stay open). If clean, close
+		// immediately. The close X (mxWindow title bar) bypasses this
+		// and auto-saves via the setVisible override below.
+		if (dirty)
+		{
+			showUnsavedPrompt();
+		}
+		else
+		{
+			thisDialog.window.setVisible(false);
+		}
+	});
+	cancelBtn.className = 'geBtn';
+	staticRefreshers.push(function()
+	{
+		cancelBtn.textContent = mxResources.get('cancel');
+		cancelBtn.title = mxResources.get('cancel');
+	});
+	cancelBtn.title = mxResources.get('cancel');
+	actions.appendChild(cancelBtn);
+
+	applyBtn = mxUtils.button(mxResources.get('save'), function()
+	{
+		// Block save while the advanced-mode textarea holds invalid JSON —
+		// otherwise applyChanges would silently persist the last valid
+		// state behind a textarea showing something different.
+		if (advancedCheckbox.checked && !jsonValid)
+		{
+			validateTextarea();
+			list.focus();
+			return;
+		}
+
+		applyChanges();
+		thisDialog.window.setVisible(false);
+	});
+	applyBtn.className = 'geBtn gePrimaryBtn';
+	staticRefreshers.push(function()
+	{
+		applyBtn.textContent = mxResources.get('save');
+		applyBtn.title = mxResources.get('save');
+	});
+	applyBtn.title = mxResources.get('save');
+	actions.appendChild(applyBtn);
+
+	div.appendChild(actions);
+
+	this.window = new mxWindow(resolveWindowTitle(),
+		div, x, y, w, h, true, true);
+	this.window.minimumSize = new mxRectangle(0, 0, 360, 360);
+	this.window.destroyOnClose = false;
+	this.window.setMaximizable(false);
+	this.window.setResizable(true);
+	this.window.setClosable(true);
+
+	// Close any open chip popover when the window moves or resizes —
+	// popovers are positioned fixed at open time and don't follow.
+	var closeOpenPopover = function()
+	{
+		if (typeof selectorChips.closePopover == 'function')
+		{
+			selectorChips.closePopover();
+		}
+	};
+	this.window.addListener(mxEvent.MOVE, closeOpenPopover);
+	this.window.addListener(mxEvent.RESIZE, closeOpenPopover);
+
+	// Refresh on language change so row labels pick up new translations
+	// even while the (stateful, non-modal) dialog stays open. Also
+	// re-applies the registered static label refreshers and updates the
+	// window's mxWindow title.
+	var onLanguageChanged = function()
+	{
+		for (var i = 0; i < staticRefreshers.length; i++)
+		{
+			try { staticRefreshers[i](); } catch (e) {}
+		}
+		if (thisDialog.window != null && thisDialog.window.title != null)
+		{
+			thisDialog.window.title.innerHTML = mxUtils.htmlEntities(
+				resolveWindowTitle());
+		}
+		renderList();
+	};
+	editorUi.addListener('languageChanged', onLanguageChanged);
+	this.window.addListener(mxEvent.DESTROY, function()
+	{
+		editorUi.removeListener(onLanguageChanged);
+	});
+
+	// Unsaved-changes prompt — delegates to the shared confirm dialog (the
+	// same "All changes will be lost!" prompt shown on file close) so every
+	// dialog is consistent. The primary "Cancel" keeps this dialog open; the
+	// secondary "Discard Changes" discards and closes the window. The close X
+	// auto-saves and skips this entirely.
+	var showUnsavedPrompt = function()
+	{
+		editorUi.confirm(mxResources.get('allChangesLost'), null, function()
+		{
+			// User chose Discard — clear dirty so the setVisible override's
+			// auto-save branch doesn't fire, then hide the AnimationDialog.
+			setDirty(false);
+			thisDialog.window.setVisible(false);
+		}, mxResources.get('cancel'), mxResources.get('discardChanges'));
+	};
+
+	// Auto-save on close-X. mxWindow's close X calls setVisible(false)
+	// without going through our footer buttons; intercept here so that
+	// path saves first. Save / Cancel buttons drive their own flow
+	// (Save calls applyChanges; Cancel either calls setDirty(false) via
+	// the prompt's Discard button, or shows the prompt). By the time
+	// origSetVisible runs, dirty is always false in those branches, so
+	// applyChanges is a no-op.
+	var origSetVisible = thisDialog.window.setVisible.bind(thisDialog.window);
+	thisDialog.window.setVisible = function(visible)
+	{
+		if (visible === false && dirty)
+		{
+			applyChanges();
+		}
+		origSetVisible(visible);
+	};
+
+	// 'hide' fires once the window is actually hiding — clean up the
+	// player and preview snapshot then.
+	this.window.addListener('hide', function()
+	{
+		stopPlayer();
+		setPlayingStep(-1);
+		// Restore any leftover preview state so closing the dialog
+		// doesn't leave cells faded out on the canvas.
+		endPreviewSession();
+	});
+
+	// Page-switch handling only applies when we're editing the page-level
+	// animation — action mode operates on a single in-memory steps array
+	// independent of which page is active.
+	if (kind == 'page')
+	{
+		graph.addListener(mxEvent.ROOT, function()
+		{
+			var newRoot = graph.getModel().getRoot();
+
+			if (newRoot != currentRoot)
+			{
+				// Persist any unsaved changes for the page we're leaving.
+				// Use the same payload shape as applyChanges — omit
+				// `loop` / `enabled` when at their default (true) to
+				// keep stored JSON minimal.
+				if (dirty)
+				{
+					var payload = {steps: data.steps};
+					if (data.loop === false) payload.loop = false;
+					if (data.enabled === false) payload.enabled = false;
+					var value = (data.steps.length > 0) ?
+						JSON.stringify({animation: payload}) : null;
+					graph.setAttributeForCell(currentRoot, 'animation', value);
+				}
+
+				currentRoot = newRoot;
+				loadFromContext();
+				setDirty(false);
+				renderList();
+				stopPlayer();
+			}
+		});
+	}
+
+	// Close this dialog when a different file is loaded — its cells and
+	// page animation belong to the previous document. Clearing dirty first
+	// makes hiding skip the auto-save override (which would otherwise write
+	// to the outgoing file or a now-removed cell).
+	var onFileLoaded = function()
+	{
+		setDirty(false);
+		thisDialog.window.setVisible(false);
+	};
+	editorUi.editor.addListener('fileLoaded', onFileLoaded);
+	this.window.addListener(mxEvent.DESTROY, function()
+	{
+		editorUi.editor.removeListener(onFileLoaded);
+	});
+
+	installDialogDocking(editorUi, this);
+
+	// Make sure the window is visible — action-mode dialogs are opened
+	// fresh from another dialog and never go through `setVisible(true)`
+	// via the menu/persistence path.
+	this.window.setVisible(true);
+
+	// Clamp into the viewport after layout settles. setVisible() (and the
+	// page-mode restoreWindowState that runs right after construction) place
+	// the window at a fixed position/size without checking the viewport, so
+	// opening in a short browser window can leave it partly off-screen — the
+	// installResizeHandler clamp otherwise only fires on a browser 'resize'.
+	// Deferred so the flex content has its final height before we measure
+	// (the height drives the clamp), addressing the "fit runs before the
+	// content is sized" ordering. setLocation() re-applies the resize
+	// handler's position + size clamp and is a no-op when already in view.
+	window.setTimeout(mxUtils.bind(this, function()
+	{
+		if (this.window != null && this.window.div != null &&
+			!this.window.minimized && this.window.dockState == null)
+		{
+			this.window.setLocation(this.window.getX(), this.window.getY());
+		}
+	}), 0);
 };
 
 /**
@@ -10884,97 +14858,161 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 	refresh();
 	changed = false;
 
-	var addBtn = mxUtils.button(mxResources.get('add'), addFn != null? function()
+	// Inline "add built-in" row (webapp only). Desktop overrides addFn to
+	// pick a file from disk, so we keep the legacy bottom Add button there.
+	var pluginsSelect = null;
+	var inlineAddBtn = null;
+
+	if (addFn == null)
 	{
-		addFn(function(newPlugin)
+		var addRow = document.createElement('div');
+		addRow.style.display = 'flex';
+		addRow.style.alignItems = 'center';
+		addRow.style.gap = '8px';
+		addRow.style.marginTop = '10px';
+
+		pluginsSelect = document.createElement('select');
+		pluginsSelect.style.flex = '1';
+		pluginsSelect.style.minWidth = '0';
+		addRow.appendChild(pluginsSelect);
+
+		inlineAddBtn = mxUtils.button(mxResources.get('add'), function()
 		{
-			if (newPlugin && mxUtils.indexOf(plugins, newPlugin) < 0)
+			var key = pluginsSelect.value;
+
+			if (key == '')
 			{
-				plugins.push(newPlugin);
+				return;
 			}
 
-			refresh();
+			var url = App.pluginRegistry[key];
+
+			if (url != null && mxUtils.indexOf(plugins, url) < 0)
+			{
+				plugins.push(url);
+				refresh();
+			}
 		});
+		inlineAddBtn.className = 'geBtn';
+		inlineAddBtn.style.margin = '0';
+		inlineAddBtn.disabled = true;
+		addRow.appendChild(inlineAddBtn);
+
+		mxEvent.addListener(pluginsSelect, 'change', function()
+		{
+			inlineAddBtn.disabled = (pluginsSelect.value == '');
+		});
+
+		if (ALLOW_CUSTOM_PLUGINS)
+		{
+			var customBtn = mxUtils.button(mxResources.get('custom') + '...', function()
+			{
+				var dlg = new FilenameDialog(editorUi, '', mxResources.get('add'), function(newValue)
+				{
+					editorUi.hideDialog();
+
+					if (newValue != null && newValue.length > 0)
+					{
+						var tokens = newValue.split(';');
+
+						for (var i = 0; i < tokens.length; i++)
+						{
+							var token = tokens[i];
+							var url = App.pluginRegistry[token];
+
+							if (url != null)
+							{
+								token = url;
+							}
+
+							if (token.length > 0 && mxUtils.indexOf(plugins, token) < 0)
+							{
+								plugins.push(token);
+							}
+						}
+
+						refresh();
+					}
+				}, mxResources.get('enterValue') + ' (' + mxResources.get('url') + ')');
+
+				editorUi.showDialog(dlg.container, 300, 80, true, true);
+				dlg.init();
+			});
+			customBtn.className = 'geBtn';
+			customBtn.style.margin = '0';
+			addRow.appendChild(customBtn);
+		}
+
+		div.appendChild(addRow);
 	}
-	: function()
+
+	// Rebuilds the dropdown so already-loaded plugins are disabled but visible
+	function refreshAddOptions()
 	{
-		var div = document.createElement('div');
+		if (pluginsSelect == null)
+		{
+			return;
+		}
 
-		var title = document.createElement('span');
-		title.style.marginTop = '6px';
-		mxUtils.write(title, mxResources.get('builtinPlugins') + ': ');
-		div.appendChild(title);
+		pluginsSelect.innerText = '';
 
-		var pluginsSelect = document.createElement('select');
-		pluginsSelect.style.width = '150px';
+		var placeholder = document.createElement('option');
+		placeholder.value = '';
+		mxUtils.write(placeholder, mxResources.get('chooseAnOption') || 'Choose…');
+		pluginsSelect.appendChild(placeholder);
 
 		for (var i = 0; i < App.publicPlugin.length; i++)
 		{
+			var key = App.publicPlugin[i];
+			var url = App.pluginRegistry[key];
 			var option = document.createElement('option');
-			mxUtils.write(option, App.publicPlugin[i]);
-			option.value = App.publicPlugin[i];
+			mxUtils.write(option, key);
+			option.value = key;
+
+			if (url == null || mxUtils.indexOf(plugins, url) >= 0)
+			{
+				option.disabled = true;
+			}
+
 			pluginsSelect.appendChild(option);
 		}
 
-		div.appendChild(pluginsSelect);
-		mxUtils.br(div);
-		mxUtils.br(div);
-
-		var customBtn = mxUtils.button(mxResources.get('custom') + '...', function()
+		if (inlineAddBtn != null)
 		{
-			var dlg = new FilenameDialog(editorUi, '', mxResources.get('add'), function(newValue)
-			{
-				editorUi.hideDialog();
-
-				if (newValue != null && newValue.length > 0)
-				{
-					var tokens = newValue.split(';');
-
-					for (var i = 0; i < tokens.length; i++)
-					{
-						var token = tokens[i];
-						var url = App.pluginRegistry[token];
-
-						if (url != null)
-						{
-							token = url;
-						}
-
-						if (token.length > 0 && mxUtils.indexOf(plugins, token) < 0)
-						{
-							plugins.push(token);
-						}
-					}
-
-					refresh();
-				}
-			}, mxResources.get('enterValue') + ' (' + mxResources.get('url') + ')');
-
-			editorUi.showDialog(dlg.container, 300, 80, true, true);
-			dlg.init();
-		});
-
-		customBtn.className = 'geBtn';
-
-		if (!ALLOW_CUSTOM_PLUGINS)
-		{
-			customBtn.style.display = 'none';
+			inlineAddBtn.disabled = true;
 		}
+	}
 
-		var dlg = new CustomDialog(editorUi, div, mxUtils.bind(this, function()
+	// Hook the dropdown refresh into the existing list refresh path
+	var refreshList = refresh;
+
+	refresh = function()
+	{
+		refreshList();
+		refreshAddOptions();
+	};
+
+	refreshAddOptions();
+
+	// Desktop keeps a bottom Add button driven by addFn (file picker etc.)
+	var addBtn = null;
+
+	if (addFn != null)
+	{
+		addBtn = mxUtils.button(mxResources.get('add'), function()
 		{
-			var token = App.pluginRegistry[pluginsSelect.value];
-
-			if (mxUtils.indexOf(plugins, token) < 0)
+			addFn(function(newPlugin)
 			{
-				plugins.push(token);
-				refresh();
-			}
-		}), null, null, null, customBtn);
-		editorUi.showDialog(dlg.container, 360, null, true, true);
-	});
+				if (newPlugin && mxUtils.indexOf(plugins, newPlugin) < 0)
+				{
+					plugins.push(newPlugin);
+				}
 
-	addBtn.className = 'geBtn';
+				refresh();
+			});
+		});
+		addBtn.className = 'geBtn';
+	}
 
 	var cancelBtn = mxUtils.button(mxResources.get('cancel'), function()
 	{
@@ -11016,13 +15054,22 @@ var PluginsDialog = function(editorUi, addFn, delFn, closeOnly)
 			buttons.appendChild(cancelBtn);
 		}
 
-		buttons.appendChild(addBtn);
+		if (addBtn != null)
+		{
+			buttons.appendChild(addBtn);
+		}
+
 		buttons.appendChild(applyBtn);
 	}
 	else
 	{
-		buttons.appendChild(addBtn);
+		if (addBtn != null)
+		{
+			buttons.appendChild(addBtn);
+		}
+
 		buttons.appendChild(applyBtn);
+
 		if (!closeOnly)
 		{
 			buttons.appendChild(cancelBtn);
@@ -12826,22 +16873,37 @@ var CustomDialog = function(editorUi, content, okFn, cancelFn, okButtonText, hel
 		buttonsContent, hideCancel, cancelButtonText, hideAfterOKFn, customButtons,
 		marginTop)
 {
+	// Flex column so the footer buttons stay pinned at the bottom and the
+	// content area scrolls if the dialog is capped by viewport max-height.
 	var div = document.createElement('div');
+	div.style.display = 'flex';
+	div.style.flexDirection = 'column';
+	div.style.minHeight = '0';
 	div.style.paddingBottom = '10px';
-	div.appendChild(content);
+
+	var scrollWrapper = document.createElement('div');
+	scrollWrapper.style.flex = '1 1 auto';
+	scrollWrapper.style.minHeight = '0';
+	scrollWrapper.style.overflowY = 'auto';
+	scrollWrapper.appendChild(content);
+	div.appendChild(scrollWrapper);
 
 	var btns = document.createElement('div');
+	btns.style.flex = '0 0 auto';
 	btns.style.marginTop = (marginTop != null) ? marginTop : '34px';
 	btns.style.textAlign = 'right';
 	
+	// Help icon first so it sits leftmost in the button row, before any
+	// caller-supplied buttons (e.g. Reset) — same position as in the
+	// dialogs that assemble their button row by hand.
+	if (!editorUi.isOffline() && helpLink != null)
+	{
+		btns.appendChild(editorUi.createHelpIcon(helpLink));
+	}
+
 	if (buttonsContent != null)
 	{
 		btns.appendChild(buttonsContent);
-	}
-	
-	if (!editorUi.isOffline() && helpLink != null)
-	{	
-		btns.appendChild(editorUi.createHelpIcon(helpLink));
 	}
 	
 	var cancelBtn = mxUtils.button(cancelButtonText || mxResources.get('cancel'), function()

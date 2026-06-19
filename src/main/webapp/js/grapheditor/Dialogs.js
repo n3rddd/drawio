@@ -1013,7 +1013,15 @@ var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defau
 	});
 
 	var div = document.createElement('div');
-	div.style.padding = '12px 12px 18px 12px';
+
+	// The tool-window (liveApply) host is a borderless mxWindow with no
+	// padding of its own, so the content supplies it. The modal dialog host
+	// (.geDialog) already pads, so skip it there to avoid double padding and
+	// to keep the 230px picker from overflowing the padded content box.
+	if (liveApply)
+	{
+		div.style.padding = '12px 12px 18px 12px';
+	}
 
 	div.appendChild(picker.div);
 	picker.div.style.marginBottom = '10px';
@@ -1389,6 +1397,7 @@ var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defau
 		buttons.style.whiteSpace = 'nowrap';
 		buttons.style.alignItems = 'center';
 		buttons.style.justifyContent = 'end';
+		buttons.style.marginTop = '34px';
 
 		if (!editorUi.isOffline())
 		{
@@ -1864,6 +1873,15 @@ var ColorWindow = function(editorUi, x, y, w)
 
 	this.fitHeight = function()
 	{
+		// While minimized the content is hidden (scrollHeight 0), so measuring
+		// would shrink to the title bar and setSize would then clamp back up to
+		// minimumSize, leaving a wrong-sized empty window. The minimize/restore
+		// logic owns the size in that state, so leave it alone.
+		if (self.window.minimized)
+		{
+			return;
+		}
+
 		var titleH = self.window.title.offsetHeight || titleHeight;
 		var contentH = container.scrollHeight;
 		var newH = titleH + contentH + self.window.contentHeightCorrection;
@@ -3282,7 +3300,8 @@ var EditDataDialog = function(ui, cell, optionalGraph)
 
 		// Avoid ':' in attribute names which seems to be valid in Chrome
 		if (name.length > 0 && name != 'label' && name != 'id' &&
-			name != 'placeholders' && name.indexOf(':') < 0)
+			name != 'placeholders' && name.indexOf(':') < 0 &&
+			EditDataDialog.isValidAttributeName(name))
 		{
 			try
 			{
@@ -3514,6 +3533,38 @@ var EditDataDialog = function(ui, cell, optionalGraph)
 	};
 
 	this.container = container;
+};
+
+/**
+ * Characters allowed as the first character of an XML attribute name
+ * (NameStartChar in the XML Name production, restricted to the BMP).
+ * See https://www.w3.org/TR/xml/#NT-Name.
+ */
+EditDataDialog.nameStartChar = ':A-Z_a-z' +
+	'\\u00C0-\\u00D6\\u00D8-\\u00F6\\u00F8-\\u02FF\\u0370-\\u037D\\u037F-\\u1FFF' +
+	'\\u200C-\\u200D\\u2070-\\u218F\\u2C00-\\u2FEF\\u3001-\\uD7FF\\uF900-\\uFDCF\\uFDF0-\\uFFFD';
+
+/**
+ * Characters allowed in an XML attribute name after the first character
+ * (NameChar in the XML Name production, restricted to the BMP).
+ */
+EditDataDialog.nameChar = '-.0-9\\u00B7\\u0300-\\u036F\\u203F-\\u2040' + EditDataDialog.nameStartChar;
+
+/**
+ * Matches a valid XML attribute name. Browsers' setAttribute does not reliably
+ * reject names that start with a digit (or other invalid characters), which
+ * produces invalid XML and silently corrupts the file on save, see
+ * jgraph/drawio#5647.
+ */
+EditDataDialog.attributeNamePattern = new RegExp('^[' + EditDataDialog.nameStartChar +
+	'][' + EditDataDialog.nameChar + ']*$');
+
+/**
+ * Returns true if the given string can be used as a data property (XML attribute) name.
+ */
+EditDataDialog.isValidAttributeName = function(name)
+{
+	return EditDataDialog.attributeNamePattern.test(name);
 };
 
 /**

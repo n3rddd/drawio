@@ -485,6 +485,23 @@ Actions.prototype.init = function()
 
 	this.put('turn', turnAction);
 
+	// Rotates fully unconnected edges by 90 degrees (separate from the edge
+	// reverse provided by the turn action above, see issue #5076)
+	var rotateEdgeAction = new Action('rotateEdge', function(evt, trigger)
+	{
+		var evt = (trigger != null) ? trigger : evt;
+
+		graph.rotateEdges(graph.getSelectionCells(),
+			(evt != null) ? mxEvent.isShiftDown(evt) : false);
+	});
+
+	rotateEdgeAction.getTitle = function()
+	{
+		return mxResources.get('turn');
+	};
+
+	this.put('rotateEdge', rotateEdgeAction);
+
 	this.put('selectConnections', new Action('selectEdges', function(evt)
 	{
 		var cell = graph.getSelectionCell();

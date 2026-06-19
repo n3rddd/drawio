@@ -8,6 +8,11 @@ function Sidebar(editorUi, container)
 {
 	this.editorUi = editorUi;
 	this.container = container;
+	// Sidebar background tooltip ("Click or drag and drop shapes. …") —
+	// the section titles now carry a more specific "Drag to reorder"
+	// hint, so the broader instruction lives on the container itself
+	// and surfaces when the user hovers over empty sidebar space.
+	this.container.setAttribute('title', mxResources.get('sidebarTooltip'));
 	this.palettes = new Object();
 	this.taglist = new Object();
 	this.lastCreated = 0;
@@ -240,6 +245,16 @@ if (urlParams['sidebar-entries'] != 'large')
 	Sidebar.prototype.minThumbStrokeWidth = 1.3;
 	Sidebar.prototype.thumbAntiAlias = true;
 }
+
+/*
+ * Defers createThumb until the entry scrolls near the viewport via an
+ * IntersectionObserver. Off-screen palettes pay almost nothing even
+ * when expanded. Toggled off by callers (e.g. search) that need the
+ * thumb's inner DOM populated synchronously. Falls back to eager
+ * rendering (the historical behavior) on browsers without
+ * IntersectionObserver support (IE11, Safari <12.1).
+ */
+Sidebar.prototype.virtualThumbs = typeof IntersectionObserver != 'undefined';
 
 /**
  * Specifies the size of the sidebar titles.
@@ -1300,7 +1315,13 @@ Sidebar.prototype.addSearchPalette = function(expand)
 
 	var input = document.createElement('input');
 	input.setAttribute('id', 'geOmniSearch');
-	input.setAttribute('placeholder', mxResources.get('typeSlashToSearch'));
+	// Reuse the placeholder text as the hover tooltip so the "Type /
+	// to search" hint is also discoverable while the input is focused
+	// (placeholders disappear once the user starts typing) and so the
+	// sidebar container's broader tooltip doesn't surface here.
+	var omniHint = mxResources.get('typeSlashToSearch');
+	input.setAttribute('placeholder', omniHint);
+	input.setAttribute('title', omniHint);
 	input.setAttribute('type', 'text');
 	inner.appendChild(input);
 
@@ -1518,8 +1539,7 @@ Sidebar.prototype.addSearchPalette = function(expand)
 			editorUi.isOwnGDriveDomain() &&
 			editorUi.isExternalDataComms() &&
 			editorUi.getServiceName() == 'draw.io' &&
-			typeof mxMermaidToDrawio !== 'undefined' &&
-			window.isMermaidEnabled)
+			EditorUi.isMermaidSupported())
 		{
 			menu.addItem(mxResources.get('generate'), null, mxUtils.bind(this, function()
 			{
@@ -1842,6 +1862,13 @@ Sidebar.prototype.addSearchPalette = function(expand)
 									center.parentNode.removeChild(center);
 								}
 
+								// Search results dedup and right-click menu key on
+								// elt.innerHTML, which would be empty for every
+								// virtual placeholder. Force synchronous thumbs
+								// for the search render loop.
+								var prevVirtualThumbs = this.virtualThumbs;
+								this.virtualThumbs = false;
+
 								for (var i = 0; i < results.length; i++)
 								{
 									(mxUtils.bind(this, function(result)
@@ -1901,6 +1928,8 @@ Sidebar.prototype.addSearchPalette = function(expand)
 										}
 									}))(results[i]);
 								}
+
+								this.virtualThumbs = prevVirtualThumbs;
 
 								if (more)
 								{
@@ -2988,9 +3017,25 @@ Sidebar.prototype.addUmlPalette = function(expand)
 Sidebar.prototype.createTitle = function(label)
 {
 	var elt = document.createElement('a');
-	elt.setAttribute('title', mxResources.get('sidebarTooltip'));
+	// Section titles can be dragged to reorder palettes — surface that
+	// affordance via the tooltip. The broader sidebar-tooltip text now
+	// lives on the container background.
+	elt.setAttribute('title', mxResources.get('reorder',
+		null, 'Drag to reorder'));
 	elt.className = 'geTitle';
-	
+
+	// Invisible overlay over the left-edge arrow icon (the icon itself
+	// is the title's background-image — see addFoldingHandler — so we
+	// can't add a child with the icon directly). The overlay only
+	// carries a tooltip; clicks bubble to the title and trigger the
+	// fold handler as before.
+	var iconHit = document.createElement('span');
+	iconHit.setAttribute('title', mxResources.get('collapseExpand',
+		null, 'Collapse/Expand'));
+	iconHit.style.cssText = 'position:absolute;left:0;top:0;' +
+		'width:24px;height:100%;cursor:pointer';
+	elt.appendChild(iconHit);
+
 	var span = document.createElement('span');
 	mxUtils.write(span, label);
 	elt.appendChild(span);
@@ -3050,7 +3095,7 @@ Sidebar.prototype.createThumb = function(cells, width, height, parent, title, sh
 	node.style.minWidth = '';
 	node.style.minHeight = '';
 	this.disablePointerEvents(node);
-	
+
 	parent.appendChild(node);
 	
 	// Adds title for sidebar entries
@@ -3117,6 +3162,13 @@ Sidebar.prototype.createItem = function(cells, title, showLabel, showTitle, widt
 		elt.style.width = (thumbWidth + border) + 'px';
 		elt.style.height = (thumbHeight + border) + 'px';
 	}
+
+	// Suppress the sidebar container's tooltip ("Click or drag and drop
+	// shapes. …") from showing when hovering an individual thumb — the
+	// thumb has its own custom showTooltip (cell preview) and the
+	// container hint isn't relevant here. The broken-image branch below
+	// overrides this with the actual cell title.
+	elt.setAttribute('title', '');
 	
 	// Blocks default click action
 	mxEvent.addListener(elt, 'click', function(evt)
@@ -3145,8 +3197,32 @@ Sidebar.prototype.createItem = function(cells, title, showLabel, showTitle, widt
 		else if (useElt == null)
 		{
 			elt.className = 'geItem';
-			this.createThumb(originalCells, thumbWidth, thumbHeight,
-				elt, title, showLabel, showTitle, width, height);
+
+			if (this.virtualThumbs)
+			{
+				// Pre-size the placeholder to match what createThumb
+				// would set, so layout is stable and the observer can
+				// actually decide which entries are off-screen. Without
+				// this, every thumb collapses to default height and the
+				// observer fires for all of them at once on insert.
+				if (this.sidebarTitles && title != null && showTitle != false)
+				{
+					elt.style.height = (this.thumbHeight +
+						this.sidebarTitleSize + 8) + 'px';
+				}
+
+				elt.renderThumbFn = mxUtils.bind(this, function()
+				{
+					this.createThumb(originalCells, thumbWidth, thumbHeight,
+						elt, title, showLabel, showTitle, width, height);
+				});
+				this.getThumbObserver().observe(elt);
+			}
+			else
+			{
+				this.createThumb(originalCells, thumbWidth, thumbHeight,
+					elt, title, showLabel, showTitle, width, height);
+			}
 		}
 		
 		if (cells.length > 1 || cells[0].vertex)
@@ -3776,6 +3852,39 @@ Sidebar.prototype.isDropStyleTargetIgnored = function(state)
 {
 	return this.graph.isSwimlane(state.cell) || this.graph.isTableCell(state.cell) ||
 		this.graph.isTableRow(state.cell) || this.graph.isTable(state.cell);
+};
+
+/**
+ * Lazily creates a shared IntersectionObserver used to defer thumb
+ * rendering until the entry scrolls near the viewport. Used by the
+ * virtual thumbs path in createItem.
+ */
+Sidebar.prototype.getThumbObserver = function()
+{
+	if (this.thumbObserver == null)
+	{
+		this.thumbObserver = new IntersectionObserver(mxUtils.bind(this, function(entries)
+		{
+			for (var i = 0; i < entries.length; i++)
+			{
+				var entry = entries[i];
+
+				if (entry.isIntersecting)
+				{
+					var fn = entry.target.renderThumbFn;
+
+					if (fn != null)
+					{
+						entry.target.renderThumbFn = null;
+						this.thumbObserver.unobserve(entry.target);
+						fn();
+					}
+				}
+			}
+		}), {rootMargin: '200px 0px'});
+	}
+
+	return this.thumbObserver;
 };
 
 /**

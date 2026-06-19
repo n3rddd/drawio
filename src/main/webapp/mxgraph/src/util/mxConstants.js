@@ -1508,6 +1508,45 @@
 	STYLE_SWIMLANE_BODY: 'swimlaneBody',
 
 	/**
+	 * Variable: STYLE_FOOTER_SIZE
+	 *
+	 * Defines the key for the footerSize style. This style specifies the size of
+	 * an additional filled, bordered region painted at the end of a swimlane
+	 * opposite the title (the "footer"), or at the bottom of a rectangle. Use 0
+	 * (default) for no footer. Value is "footerSize".
+	 */
+	STYLE_FOOTER_SIZE: 'footerSize',
+
+	/**
+	 * Variable: STYLE_FOOTER_COLOR
+	 *
+	 * Defines the key for the footerColor style. This style specifies the fill
+	 * color of the footer region of a rectangle (see <STYLE_FOOTER_SIZE>). If
+	 * not specified then the stroke color is used. Value is "footerColor".
+	 */
+	STYLE_FOOTER_COLOR: 'footerColor',
+
+	/**
+	 * Variable: STYLE_CENTER_RADIUS
+	 *
+	 * Defines the key for the centerRadius style. This style specifies the
+	 * radius of an additional filled circle painted at the center of an
+	 * ellipse, e.g. for UML final states. Use 0 (default) for no center
+	 * circle. Value is "centerRadius".
+	 */
+	STYLE_CENTER_RADIUS: 'centerRadius',
+
+	/**
+	 * Variable: STYLE_CENTER_COLOR
+	 *
+	 * Defines the key for the centerColor style. This style specifies the
+	 * fill color of the center circle of an ellipse (see
+	 * <STYLE_CENTER_RADIUS>). If not specified then the stroke color is
+	 * used. Value is "centerColor".
+	 */
+	STYLE_CENTER_COLOR: 'centerColor',
+
+	/**
 	 * Variable: STYLE_ENDFILL
 	 * 
 	 * Defines the key for the endFill style. Use 0 for no fill or 1 (default)

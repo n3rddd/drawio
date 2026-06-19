@@ -425,7 +425,7 @@
 			{
 				editorUi.showPublishLinkDialog(mxResources.get('url'), null, null, null, null, null, null, null,
 					function(linkTarget, linkColor, currentPage, lightbox, editLink, layers, width, height,
-						tags, link, transparent, darkMode, allPages, useTagSettings)
+						tags, link, transparent, darkMode, allPages, useTagSettings, linkIcons, tooltipIcons)
 					{
 						var params = [];
 
@@ -438,20 +438,84 @@
 
 						var dlg = new EmbedDialog(editorUi, editorUi.createLink(linkTarget, linkColor,
 							allPages, lightbox, editLink, layers, null, true, params, null,
-							currentPage, null, darkMode));
+							currentPage, null, darkMode, linkIcons, tooltipIcons));
 						editorUi.showDialog(dlg.container, 450, 270, true, true, null, false, null, new mxRectangle(0, 0, 400, 250));
 						dlg.init();
 					}, null, true, true);
 			}));
 		}
 		
+		editorUi.actions.put('exportJson', new Action('formatJson' + '...', function()
+		{
+			var div = document.createElement('div');
+			div.style.whiteSpace = 'nowrap';
+			var noPages = editorUi.pages == null || editorUi.pages.length <= 1;
+
+			var hd = document.createElement('h3');
+			mxUtils.write(hd, mxResources.get('formatJson'));
+			hd.style.cssText = 'width:100%;text-align:center;margin-top:0px;margin-bottom:10px';
+			div.appendChild(hd);
+
+			var section = document.createElement('div');
+			section.className = 'geDialogSection';
+
+			var graph = editorUi.editor.graph;
+			var selection = editorUi.addCheckbox(section, mxResources.get('selectionOnly'),
+				false, graph.isSelectionEmpty());
+			var pages = editorUi.addCheckbox(section, mxResources.get('allPages'), !noPages, noPages);
+			var includeCopy = editorUi.addCheckbox(section, mxResources.get('includeCopyOfMyDiagram'), false);
+			var compressed = editorUi.addCheckbox(section, mxResources.get('compressed'),
+				Editor.defaultCompressed, true);
+
+			div.appendChild(section);
+
+			// Exporting the selection only is restricted to the current page
+			mxEvent.addListener(selection, 'change', function()
+			{
+				if (selection.checked)
+				{
+					pages.setAttribute('disabled', 'disabled');
+				}
+				else if (!noPages)
+				{
+					pages.removeAttribute('disabled');
+				}
+			});
+
+			// Compression only applies to the included copy of the diagram
+			mxEvent.addListener(includeCopy, 'change', function()
+			{
+				if (includeCopy.checked)
+				{
+					compressed.removeAttribute('disabled');
+				}
+				else
+				{
+					compressed.setAttribute('disabled', 'disabled');
+				}
+			});
+
+			var dlg = new CustomDialog(editorUi, div, mxUtils.bind(this, function()
+			{
+				var useSelection = selection.checked && !graph.isSelectionEmpty();
+				var allPages = !useSelection && !noPages && pages.checked;
+				var json = editorUi.createJsonForExport(allPages, includeCopy.checked,
+					includeCopy.checked && compressed.checked, useSelection);
+				editorUi.saveData(editorUi.getBaseFilename(allPages) + '.json', 'json',
+					JSON.stringify(json, null, 2), 'application/json');
+			}), null, mxResources.get('export'));
+
+			editorUi.showDialog(dlg.container, 300, 240, true, true);
+		}));
+
 		editorUi.actions.put('exportHtml', new Action('formatHtmlEmbedded' + '...', function()
 		{
 			editorUi.getPublicUrl(editorUi.getCurrentFile(), function(url)
 			{
-				editorUi.showHtmlDialog(mxResources.get('export'), null, url, function(publicUrl, zoomEnabled,
+				editorUi.showHtmlDialog(mxResources.get('export'),
+					'https://www.drawio.com/docs/manual/export/embed-html/', url, function(publicUrl, zoomEnabled,
 					initialZoom, linkTarget, linkColor, fit, allPages, layers, tags, lightbox, editLink, theme,
-					useTagSettings)
+					useTagSettings, linkIcons, tooltipIcons)
 				{
 					editorUi.createHtml(publicUrl, zoomEnabled, initialZoom, linkTarget, linkColor, fit, allPages,
 						layers, tags, lightbox, editLink, mxUtils.bind(this, function(html, scriptTag)
@@ -462,7 +526,7 @@
 								'<meta charset="utf-8"/>\n</head>\n<body>' + html + '\n' + scriptTag + '\n</body>\n</html>';
 							editorUi.saveData(basename + ((basename.substring(basename.lenth - 7) ==
 								'.drawio') ? '' : '.drawio') + '.html', 'html', result, 'text/html');
-						}), theme, useTagSettings);
+						}), theme, useTagSettings, linkIcons, tooltipIcons);
 				});
 			});
 		}));
@@ -798,16 +862,16 @@
 				'https://www.drawio.com/doc/faq/export-diagram',
 				mxUtils.bind(this, function(scale, transparentBackground, ignoreSelection,
 					addShadow, editable, embedImages, border, cropImage, currentPage,
-					linkTarget, grid, theme, exportType, embedFonts)
+					linkTarget, grid, theme, exportType, embedFonts, embedCellMetadata)
 				{
 					var val = parseInt(scale);
 					editorUi.lastExportSvgEditable = editable;
-					
+
 					if (!isNaN(val) && val > 0)
 					{
 						editorUi.exportSvg(val / 100, transparentBackground, ignoreSelection,
 							addShadow, editable, embedImages, border, !cropImage, currentPage,
-							linkTarget, theme, exportType, embedFonts);
+							linkTarget, theme, exportType, embedFonts, null, embedCellMetadata);
 					}
 				}), true, editorUi.lastExportSvgEditable, 'svg', true);
 		}));
@@ -819,7 +883,8 @@
 				editorUi.showExportDialog(mxResources.get('image'), false, mxResources.get('export'),
 					'https://www.drawio.com/doc/faq/export-diagram',
 					mxUtils.bind(this, function(scale, transparentBackground, ignoreSelection, addShadow, editable,
-						embedImages, border, cropImage, currentPage, dummy, grid, theme, exportType)
+						embedImages, border, cropImage, currentPage, dummy, grid, theme, exportType, embedFonts,
+						embedCellMetadata, dpi)
 					{
 						var val = parseInt(scale);
 
@@ -827,7 +892,7 @@
 						{
 							editorUi.exportImage(val / 100, transparentBackground && format == 'png',
 								ignoreSelection, addShadow, editable && format == 'png', border,
-								!cropImage, currentPage, format, grid, null, theme, exportType);
+								!cropImage, currentPage, format, grid, (format == 'png') ? dpi : null, theme, exportType);
 
 							if (done != null)
 							{
@@ -1003,7 +1068,46 @@
 		}), null, null, Editor.ctrlKey + '+K');
 		action.setToggleAction(true);
 		action.setSelectedCallback(mxUtils.bind(this, function() { return this.tagsWindow != null && this.tagsWindow.window.isVisible(); }));
-		
+
+		action = editorUi.actions.addAction('animation', mxUtils.bind(this, function()
+		{
+			if (this.animationWindow == null)
+			{
+				var saved = mxSettings.getWindowState('animation');
+				var ax = (saved != null && saved.x != null) ? saved.x :
+					Math.max(0, (document.body.offsetWidth - 480) / 2);
+				var ay = (saved != null && saved.y != null) ? saved.y : 120;
+				var aw = (saved != null && saved.w != null) ? saved.w : 480;
+				var ah = (saved != null && saved.h != null) ? saved.h : 460;
+
+				this.animationWindow = new AnimationDialog(editorUi, ax, ay, aw, ah);
+				this.animationWindow.window.addListener('show', mxUtils.bind(this, function()
+				{
+					editorUi.fireEvent(new mxEventObject('animation'));
+				}));
+				this.animationWindow.window.addListener('hide', function()
+				{
+					editorUi.fireEvent(new mxEventObject('animation'));
+				});
+
+				editorUi.installWindowPersistence('animation', this.animationWindow);
+
+				if (saved != null)
+				{
+					editorUi.restoreWindowState('animation', this.animationWindow);
+				}
+
+				this.animationWindow.window.setVisible(true);
+				editorUi.fireEvent(new mxEventObject('animation'));
+			}
+			else
+			{
+				this.animationWindow.window.setVisible(!this.animationWindow.window.isVisible());
+			}
+		}));
+		action.setToggleAction(true);
+		action.setSelectedCallback(mxUtils.bind(this, function() { return this.animationWindow != null && this.animationWindow.window.isVisible(); }));
+
 		// Shown on aj/ac domains
 		if ((EditorUi.isElectronApp ||
 			(Editor.enableAi || ((Editor.config == null ||
@@ -1014,8 +1118,7 @@
 			Editor.aiActions.length > 0 &&
 			editorUi.isExternalDataComms()) &&
 			editorUi.getServiceName() == 'draw.io' &&
-			typeof mxMermaidToDrawio !== 'undefined' &&
-			window.isMermaidEnabled)
+			EditorUi.isMermaidSupported())
 		{
 			var generateAction = editorUi.actions.put('generate', new Action('generate', function()
 			{
@@ -1273,13 +1376,10 @@
 			})));
 		}
 		
-		editorUi.customLayoutConfig = [{'layout': 'mxHierarchicalLayout',
-			'config':
-			{'orientation': 'west',
-			'intraCellSpacing': 30,
-			'interRankCellSpacing': 100,
-			'interHierarchySpacing': 60,
-			'parallelEdgeSpacing': 10}}];
+		// Starts empty so the dialog opens with just the Add dropdown — picking
+		// a layout from there builds the JSON entry via that layout's config
+		// dialog. Hand-editing is still supported on top of what Add inserts.
+		editorUi.customLayoutConfig = [];
 		
 		// Adds action for running layouts
 		editorUi.actions.addAction('runLayout', function()
@@ -1316,12 +1416,42 @@
 		
 		var layoutMenu = this.get('layout');
 		var layoutMenuFunct = layoutMenu.funct;
-		
+
+		// Original (mxGraph) layout items are exposed via the Legacy Layouts submenu
+		this.put('legacyLayout', new Menu(layoutMenuFunct));
+
 		layoutMenu.funct = function(menu, parent)
 		{
-			layoutMenuFunct.apply(this, arguments);
+			if (typeof ElkLayout !== 'undefined')
+			{
+				// Resolve each menu name through ElkLayout.MENU_PRESETS (the single
+				// source shared with drawio-mcp) so the algorithm + direction live
+				// in one place (drawio-elk), not inline here.
+				var addElk = function(name)
+				{
+					menu.addItem(mxResources.get(name) + '...', null, function()
+					{
+						var p = ElkLayout.MENU_PRESETS[name];
+						ElkLayout.runWithDialog(editorUi, p.algorithm, p.options,
+							mxResources.get(name));
+					}, parent, null, isGraphEnabled());
+				};
 
-			menu.addItem(mxResources.get('orgChart'), null, function()
+				addElk('verticalFlow');
+				addElk('horizontalFlow');
+				menu.addSeparator(parent);
+				addElk('verticalTree');
+				addElk('horizontalTree');
+				addElk('radialTree');
+				menu.addSeparator(parent);
+				addElk('organic');
+			}
+			else
+			{
+				layoutMenuFunct.apply(this, arguments);
+			}
+
+			menu.addItem(mxResources.get('orgChart') + '...', null, function()
 			{
 				var branchOptimizer = null, parentChildSpacingVal = 20, siblingSpacingVal = 20;
 				
@@ -1431,39 +1561,56 @@
 					siblingSpacingVal = siblingSpacing.value;
 				});
 
-				var customBtn = mxUtils.button(mxResources.get('custom') + '...', function()
-				{
-					var value = [{layout: 'mxOrgChartLayout',
-						config: {
-							branchOptimizer: parseInt(typeSelect.value),
-							parentChildSpacing: parseInt(parentChildSpacing.value),
-							siblingSpacing: parseInt(siblingSpacing.value)
-						}
-					}];
-
-					editorUi.hideDialog();
-					editorUi.showCustomLayoutDialog(
-						JSON.stringify(value, null, 2));
-				});
-				
-				customBtn.className = 'geBtn';
-
+				// The legacy "Custom…" escape hatch is gone now that the Custom
+				// Layout dialog has its own Add dropdown — picking Org Chart
+				// there opens this same configuration UI and writes the JSON.
 				var dlg = new CustomDialog(editorUi, div, function()
 				{
 					if (branchOptimizer == null)
 					{
 						branchOptimizer = 2;
 					}
-					
-					editorUi.loadOrgChartLayouts(delayed);
-				}, null, null, null, customBtn);
 
-				editorUi.showDialog(dlg.container, 355, 140, true, true);
+					editorUi.loadOrgChartLayouts(delayed);
+				}, null, null,
+					'https://github.com/jgraph/drawio/discussions/5635#org-chart-layout');
+
+				// null height = size to content (a fixed height clips the
+				// third row behind a scrollbar)
+				editorUi.showDialog(dlg.container, 355, null, true, true);
 			}, parent, null, isGraphEnabled());
-			
+
+			// Circle layout has no ELK equivalent (radial is concentric rings,
+			// not a single ring), so it lives alongside orgChart in the main
+			// menu rather than in Legacy.
+			menu.addItem(mxResources.get('circle'), null, mxUtils.bind(this, function()
+			{
+				editorUi.tryAndHandle(mxUtils.bind(this, function()
+				{
+					var layout = new mxCircleLayout(graph);
+
+					editorUi.executeLayout(function()
+					{
+						var tmp = graph.getSelectionCell();
+
+						if (tmp == null || graph.getModel().getChildCount(tmp) == 0)
+						{
+							tmp = graph.getDefaultParent();
+						}
+
+						layout.execute(tmp);
+
+						if (graph.getModel().isVertex(tmp))
+						{
+							graph.updateGroupBounds([tmp], graph.gridSize * 2, true);
+						}
+					}, true);
+				}));
+			}), parent);
+
 			menu.addSeparator(parent);
-			
-			menu.addItem(mxResources.get('parallels'), null, mxUtils.bind(this, function()
+
+			menu.addItem(mxResources.get('parallels') + '...', null, mxUtils.bind(this, function()
 			{
 				editorUi.tryAndHandle(mxUtils.bind(this, function()
 				{
@@ -1486,7 +1633,15 @@
 				}));
 			}), parent);
 			
+			if (typeof ElkLayout !== 'undefined')
+			{
+				menu.addSeparator(parent);
+				editorUi.menus.addSubmenu('legacyLayout', menu, parent,
+					mxResources.get('legacyLayouts'));
+			}
+
 			menu.addSeparator(parent);
+
 			editorUi.menus.addMenuItem(menu, 'runLayout', parent, null, null, mxResources.get('custom') + '...');
 		};
 		
@@ -2494,7 +2649,7 @@
 						editorUi.showPublishLinkDialog(mxResources.get('notion'), null, null, true,
 							'https://www.drawio.com/blog/drawio-notion', footer, publicUrl, editorUi.getCurrentFile(),
 							function(linkTarget, linkColor, currentPage, lightbox, editLink, layers, width, height,
-								tags, link, transparent, darkMode, allPages, useTagSettings)
+								tags, link, transparent, darkMode, allPages, useTagSettings, linkIcons, tooltipIcons)
 							{
 								var params = ['border=0'];
 
@@ -2507,7 +2662,7 @@
 
 								var dlg = new EmbedDialog(editorUi, editorUi.createLink(linkTarget, linkColor,
 									true, lightbox, editLink, layers, (link == 'public') ? publicUrl : null,
-									null, params, null, currentPage, null, darkMode));
+									null, params, null, currentPage, null, darkMode, linkIcons, tooltipIcons));
 								editorUi.showDialog(dlg.container, 450, 270, true, true, null, false, null, new mxRectangle(0, 0, 400, 250));
 								dlg.init();
 							}, null, true);
@@ -2524,9 +2679,9 @@
 			{
 				editorUi.getPublicUrl(editorUi.getCurrentFile(), function(url)
 				{
-					editorUi.showHtmlDialog(mxResources.get('create'), 'https://www.drawio.com/doc/faq/embed-html-options',
+					editorUi.showHtmlDialog(mxResources.get('create'), 'https://www.drawio.com/docs/manual/export/embed-html/',
 						url, function(publicUrl, zoomEnabled, initialZoom, linkTarget, linkColor, fit, allPages, layers, tags,
-							lightbox, editLink, theme)
+							lightbox, editLink, theme, useTagSettings, linkIcons, tooltipIcons)
 					{
 						editorUi.createHtml(publicUrl, zoomEnabled, initialZoom, linkTarget, linkColor, fit, allPages,
 							layers, tags, lightbox, editLink, mxUtils.bind(this, function(html, scriptTag)
@@ -2604,11 +2759,11 @@
 								});
 								editorUi.showDialog(dlg.container, 450, 270, true, true, null, false, null, new mxRectangle(0, 0, 400, 250));
 								dlg.init();
-							}), theme);
+							}), theme, useTagSettings, linkIcons, tooltipIcons);
 					});
 				});
 			}));
-			
+
 			editorUi.actions.put('liveImage', new Action('Live image...', function()
 			{
 				var current = editorUi.getCurrentFile();
@@ -2634,11 +2789,11 @@
 			
 			editorUi.actions.put('embedImage', new Action('image' + '...', function()
 			{
-				editorUi.showEmbedImageDialog(function(fit, shadow, retina, lightbox, editLink, layers)
+				editorUi.showEmbedImageDialog(function(fit, shadow, retina, lightbox, editLink, layers, linkIcons, tooltipIcons)
 				{
 					if (editorUi.spinner.spin(document.body, mxResources.get('loading')))
 					{
-						editorUi.createEmbedImage(fit, shadow, retina, lightbox, editLink, layers, function(result)
+						editorUi.createEmbedImage(fit, shadow, retina, lightbox, editLink, layers, linkIcons, tooltipIcons, function(result)
 						{
 							editorUi.spinner.stop();
 							var dlg = new EmbedDialog(editorUi, result);
@@ -2650,16 +2805,17 @@
 							editorUi.handleError(err);
 						});
 					}
-				}, mxResources.get('image'), mxResources.get('retina'), editorUi.editor.isExportToCanvas());
+				}, mxResources.get('image'), mxResources.get('retina'), editorUi.editor.isExportToCanvas(),
+					'https://github.com/jgraph/drawio/discussions/5616#embed-image--svg-dialogs');
 			}));
 
 			editorUi.actions.put('embedSvg', new Action('formatSvg' + '...', function()
 			{
-				editorUi.showEmbedImageDialog(function(fit, shadow, image, lightbox, editLink, layers)
+				editorUi.showEmbedImageDialog(function(fit, shadow, image, lightbox, editLink, layers, linkIcons, tooltipIcons)
 				{
 					if (editorUi.spinner.spin(document.body, mxResources.get('loading')))
 					{
-						editorUi.createEmbedSvg(fit, shadow, image, lightbox, editLink, layers, function(result)
+						editorUi.createEmbedSvg(fit, shadow, image, lightbox, editLink, layers, linkIcons, tooltipIcons, function(result)
 						{
 							editorUi.spinner.stop();
 
@@ -2673,7 +2829,7 @@
 						});
 					}
 				}, mxResources.get('formatSvg'), mxResources.get('image'),
-					true, 'https://www.drawio.com/doc/faq/embed-svg.html');
+					true, 'https://github.com/jgraph/drawio/discussions/5616#embed-image--svg-dialogs');
 			}));
 			
 			editorUi.actions.put('embedIframe', new Action('iframe' + '...', function()
@@ -2686,7 +2842,7 @@
 						Math.ceil(Math.max(100, bounds.height / graph.view.scale)) + 2, null, null, null,
 						publicUrl, editorUi.getCurrentFile(), function(linkTarget, linkColor,
 							currentPage, lightbox, editLink, layers, width, height, tags, link,
-							transparent, darkMode, allPages, useTagSettings)
+							transparent, darkMode, allPages, useTagSettings, linkIcons, tooltipIcons)
 						{
 							var params = [];
 
@@ -2700,7 +2856,7 @@
 							var dlg = new EmbedDialog(editorUi, '<iframe frameborder="0" style="width:' + width +
 								';height:' + height + ';" src="' + editorUi.createLink(linkTarget, linkColor,
 								true, lightbox, editLink, layers, (link == 'public') ? publicUrl : null,
-								null, params, null, currentPage, transparent, darkMode) + '"' + ((transparent) ?
+								null, params, null, currentPage, transparent, darkMode, linkIcons, tooltipIcons) + '"' + ((transparent) ?
 								' allowtransparency="true"' : '') + '></iframe>');
 							editorUi.showDialog(dlg.container, 450, 270, true, true, null, false, null, new mxRectangle(0, 0, 400, 250));
 							dlg.init();
@@ -2715,7 +2871,7 @@
 			{
 				editorUi.showPublishLinkDialog(null, null, null, null, null, null, publicUrl, editorUi.getCurrentFile(),
 					function(linkTarget, linkColor, currentPage, lightbox, editLink, layers, width, height,
-						tags, link, transparent, darkMode, allPages, useTagSettings)
+						tags, link, transparent, darkMode, allPages, useTagSettings, linkIcons, tooltipIcons)
 					{
 						var params = [];
 
@@ -2728,7 +2884,7 @@
 
 						var dlg = new EmbedDialog(editorUi, editorUi.createLink(linkTarget, linkColor,
 							true, lightbox, editLink, layers, (link == 'public') ? publicUrl : null,
-							null, params, null, currentPage, null, darkMode));
+							null, params, null, currentPage, null, darkMode, linkIcons, tooltipIcons));
 						editorUi.showDialog(dlg.container, 450, 270, true, true, null, false, null, new mxRectangle(0, 0, 400, 250));
 						dlg.init();
 					}, null, true);
@@ -2950,7 +3106,9 @@
 			{
 				exportItems.push('exportUrl');
 			}
-			
+
+			exportItems.push('exportJson');
+
 			this.addMenuItems(menu, exportItems, parent);
 
 			if (!editorUi.isOffline())
@@ -3795,10 +3953,15 @@
 							if (dlg.graph != null && dlg.graph.getModel().getChildCount(
 								dlg.graph.getDefaultParent()) > 1)
 							{
-								editorUi.confirm(mxResources.get('areYouSure'), function()
+								// Same shared confirm as the Close button and
+								// file close. Primary "Cancel" keeps the dialog
+								// open; secondary "Discard Changes" closes it.
+								editorUi.confirm(mxResources.get('allChangesLost'),
+									null, function()
 								{
 									editorUi.hideDialog();
-								});
+								}, mxResources.get('cancel'),
+									mxResources.get('discardChanges'));
 
 								return false;
 							}
@@ -4068,7 +4231,7 @@
 					editorUi.menus.addMenuItems(menu, ['insertTemplate'], parent);
 				}
 
-				if (window.isMermaidEnabled)
+				if (EditorUi.isMermaidSupported())
 				{
 					editorUi.menus.addMenuItems(menu, ['mermaid'], parent);
 				}
@@ -4088,7 +4251,7 @@
 					this.addMenuItems(menu, ['insertTemplate'], parent);
 				}
 
-				if (window.isMermaidEnabled)
+				if (EditorUi.isMermaidSupported())
 				{
 					this.addMenuItems(menu, ['mermaid'], parent);
 				}

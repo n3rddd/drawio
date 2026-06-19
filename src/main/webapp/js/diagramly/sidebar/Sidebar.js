@@ -730,6 +730,8 @@
 					this.palettes[id][1], id);
 			}
 
+			this.installPaletteContextMenu(this.palettes[id][0], id);
+
 			// Debounced re-apply of saved order for late-loaded palettes
 			if (this._applyOrderTimer != null)
 			{
@@ -925,43 +927,70 @@
 			document.addEventListener(upEvt, upHandler);
 		}));
 
-		// Right-click context menu for reset
+	};
+
+	/**
+	 * Installs a right-click context menu on every palette title with
+	 * Collapse/Expand for the clicked section, Collapse All / Expand All
+	 * for the whole sidebar, and (for reorderable palettes) Reset to
+	 * clear the saved drag order.
+	 */
+	Sidebar.prototype.installPaletteContextMenu = function(title, id)
+	{
+		var sidebar = this;
+
 		mxEvent.addListener(title, 'contextmenu', mxUtils.bind(this, function(evt)
 		{
 			mxEvent.consume(evt);
 
-			if (mxSettings.getLibraryOrder() != null)
-			{
-				var menuDiv = document.createElement('div');
-				menuDiv.className = 'mxPopupMenu geMenubarMenu';
-				menuDiv.style.position = 'absolute';
-				menuDiv.style.zIndex = '10001';
-				menuDiv.style.left = evt.clientX + 'px';
-				menuDiv.style.top = evt.clientY + 'px';
+			var menuDiv = document.createElement('div');
+			menuDiv.className = 'mxPopupMenu geMenubarMenu';
+			menuDiv.style.position = 'absolute';
+			menuDiv.style.zIndex = '10001';
+			menuDiv.style.left = evt.clientX + 'px';
+			menuDiv.style.top = evt.clientY + 'px';
 
-				var table = document.createElement('table');
-				table.className = 'mxPopupMenu';
-				var tbody = document.createElement('tbody');
+			var table = document.createElement('table');
+			table.className = 'mxPopupMenu';
+			var tbody = document.createElement('tbody');
+			table.appendChild(tbody);
+			menuDiv.appendChild(table);
+
+			var hide = function()
+			{
+				if (menuDiv.parentNode != null)
+				{
+					menuDiv.parentNode.removeChild(menuDiv);
+				}
+
+				document.removeEventListener('mousedown', hideMenu);
+			};
+
+			var hideMenu = function(e)
+			{
+				if (!menuDiv.contains(e.target))
+				{
+					hide();
+				}
+			};
+
+			var addItem = function(label, fn)
+			{
 				var tr = document.createElement('tr');
 				tr.className = 'mxPopupMenuItem';
 				var td = document.createElement('td');
 				td.className = 'mxPopupMenuItem';
 				td.style.padding = '6px 10px';
 				td.style.cursor = 'pointer';
-				mxUtils.write(td, mxResources.get('reset'));
+				mxUtils.write(td, label);
 				tr.appendChild(td);
 				tbody.appendChild(tr);
-				table.appendChild(tbody);
-				menuDiv.appendChild(table);
 
-				document.body.appendChild(menuDiv);
-				mxUtils.fit(menuDiv);
-
-				mxEvent.addListener(tr, 'mouseup', mxUtils.bind(this, function()
+				mxEvent.addListener(tr, 'mouseup', function()
 				{
-					sidebar.resetPaletteOrder();
-					document.body.removeChild(menuDiv);
-				}));
+					hide();
+					fn();
+				});
 
 				mxEvent.addListener(tr, 'mouseenter', function()
 				{
@@ -972,23 +1001,87 @@
 				{
 					tr.className = 'mxPopupMenuItem';
 				});
+			};
 
-				var hideMenu = function(e)
+			var addSeparator = function()
+			{
+				var tr = document.createElement('tr');
+				var td = document.createElement('td');
+				td.style.padding = '0';
+				var hr = document.createElement('hr');
+				hr.style.cssText = 'border:none;border-top:1px solid ' +
+					'light-dark(#e0e0e0,#444);margin:4px 0';
+				td.appendChild(hr);
+				tr.appendChild(td);
+				tbody.appendChild(tr);
+			};
+
+			var elts = sidebar.palettes[id];
+			var contentDiv = (elts != null) ? elts[1].firstChild : null;
+			var expanded = contentDiv != null && contentDiv.style.display != 'none';
+
+			addItem(mxResources.get(expanded ? 'collapse' : 'expand'), function()
+			{
+				title.click();
+			});
+
+			addSeparator();
+			addItem(mxResources.get('collapseAll'), function()
+			{
+				sidebar.setAllPalettesExpanded(false);
+			});
+			addItem(mxResources.get('expandAll'), function()
+			{
+				sidebar.setAllPalettesExpanded(true);
+			});
+
+			if (id != 'search' && mxSettings.getLibraryOrder() != null)
+			{
+				addSeparator();
+				addItem(mxResources.get('reset'), function()
 				{
-					if (!menuDiv.contains(e.target))
-					{
-						if (menuDiv.parentNode != null)
-						{
-							menuDiv.parentNode.removeChild(menuDiv);
-						}
-
-						document.removeEventListener('mousedown', hideMenu);
-					}
-				};
-
-				document.addEventListener('mousedown', hideMenu);
+					sidebar.resetPaletteOrder();
+				});
 			}
+
+			document.body.appendChild(menuDiv);
+			mxUtils.fit(menuDiv);
+			document.addEventListener('mousedown', hideMenu);
 		}));
+	};
+
+	/**
+	 * Toggles every palette to the given expanded state by clicking each
+	 * title that doesn't already match. Going through the normal click
+	 * path keeps the arrow icon, lazy init (onInit), and persisted state
+	 * (via setContentVisible override) all in sync.
+	 */
+	Sidebar.prototype.setAllPalettesExpanded = function(expanded)
+	{
+		for (var pid in this.palettes)
+		{
+			var elts = this.palettes[pid];
+
+			if (elts == null)
+			{
+				continue;
+			}
+
+			var titleEl = elts[0];
+			var contentDiv = elts[1].firstChild;
+
+			if (titleEl == null || contentDiv == null)
+			{
+				continue;
+			}
+
+			var currentlyExpanded = contentDiv.style.display != 'none';
+
+			if (currentlyExpanded != expanded)
+			{
+				titleEl.click();
+			}
+		}
 	};
 
 	/**

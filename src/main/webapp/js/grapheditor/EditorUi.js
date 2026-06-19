@@ -194,6 +194,21 @@ EditorUi = function(editor, container, lightbox)
 			return graph.isEditing() || (evt != null && this.isSelectionAllowed(evt));
 		});
 		
+		// macOS Cmd/Ctrl+rubberband selects the page text: focusing the contentEditable
+		// clipboard element (see showTypingShim) while a drag contests focus lets the
+		// browser extend a native selection out to document.body, which sits outside the
+		// per-container onselectstart handlers below. The editor never selects the page
+		// chrome, so cancel any selectstart that targets the body/root element.
+		document.addEventListener('selectstart', function(evt)
+		{
+			var src = mxEvent.getSource(evt);
+
+			if (src == document.body || src == document.documentElement)
+			{
+				evt.preventDefault();
+			}
+		}, true);
+
 		// Disables text selection while not editing and no dialog visible
 		if (this.container == document.body && (!this.editor.chromeless ||
 			this.editor.editable))
@@ -1451,6 +1466,23 @@ EditorUi.prototype.findCommonProperties = function(cell, properties, addAll, sst
 						getStencilColors('strokecolor'));
 				Array.prototype.push.apply(state.shape.customProperties,
 						getStencilColors('fontcolor'));
+
+				// Adds boolean properties for conditional label bounds
+				var lbNodes = stencil.desc.getElementsByTagName('labelBounds');
+
+				for (var i = 0; i < lbNodes.length; i++)
+				{
+					var name = lbNodes[i].getAttribute('if');
+
+					if (name != null && !handledKeys[name])
+					{
+						handledKeys[name] = true;
+						state.shape.customProperties.push({name: name,
+							dispName: (name == 'boundedLbl') ? 'Bounded Label' :
+							Editor.getLabelForStylename(name),
+							type: 'bool', defVal: false});
+					}
+				}
 			}
 
 			// Adds common vertex/edge properties
@@ -1494,7 +1526,8 @@ EditorUi.prototype.initSelectionState = function()
 		style: {}, containsImage: false, containsLabel: false, fill: true, glass: true, html: true,
 		rounded: true, autoSize: false, image: false, shadow: true, lineJumps: true, resizable: true,
 		table: false, cell: false, row: false, movable: true, rotatable: true, stroke: true,
-		swimlane: false, unlocked: this.editor.graph.isEnabled(), connections: false};
+		swimlane: false, transparentBounds: false, unlocked: this.editor.graph.isEnabled(),
+		connections: false, connectedEdges: false};
 };
 
 /**
@@ -1761,6 +1794,7 @@ EditorUi.prototype.updateSelectionStateForCell = function(result, cell, cells, i
 		result.movable = result.movable && graph.isCellMovable(cell) &&
 			!graph.isTableRow(cell) && !graph.isTableCell(cell);
 		result.swimlane = result.swimlane || graph.isSwimlane(cell);
+		result.transparentBounds = result.transparentBounds || graph.isTransparentBounds(cell);
 		result.table = result.table || graph.isTable(cell);
 		result.cell = result.cell || graph.isTableCell(cell);
 		result.row = result.row || graph.isTableRow(cell);
@@ -1833,6 +1867,11 @@ EditorUi.prototype.updateSelectionStateForCell = function(result, cell, cells, i
 		result.resizable = false;
 		result.rotatable = false;
 		result.movable = false;
+		// Tracks edges with at least one connected end so that the turn action
+		// can rotate fully unconnected edges by 90 degrees (see issue #5076)
+		result.connectedEdges = result.connectedEdges ||
+			graph.model.getTerminal(cell, true) != null ||
+			graph.model.getTerminal(cell, false) != null;
 	}
 
 	var state = graph.view.getState(cell);
@@ -2925,6 +2964,50 @@ EditorUi.prototype.showTypingShim = function()
 		}
 
 		shim.value = '';
+
+		// If the native clipboard textInput is present (Ctrl/Meta is held),
+		// keep focus on it so Ctrl+V/C/X reach its handlers instead of the
+		// shim. Without this, Ctrl+click moves focus to graph.container,
+		// focus events bring focus to the shim, and a subsequent Ctrl+V
+		// pastes into the shim and triggers cell-edit-from-typing.
+		if (this.clipboardElt != null && this.clipboardElt.parentNode != null)
+		{
+			// Safari ignores {preventScroll: true} when focusing the contentEditable
+			// clipboard div and scrolls the container to it, so snapshot and restore the
+			// scroll position around the focus/selectAll - the same workaround the
+			// Ctrl/Meta keydown handler uses for this element.
+			var sx = graph.container.scrollLeft;
+			var sy = graph.container.scrollTop;
+
+			this.clipboardElt.focus({preventScroll: true});
+
+			// Select via a Range instead of execCommand('selectAll'): selectAll fires a
+			// selectstart that, when focus is contended (eg. during a rubberband), targets
+			// document.body and is cancelled by the body/root selectstart block - leaving
+			// no selection, so a later Ctrl+V lands on body and is swallowed. A Range
+			// fires no selectstart and is scoped to the clipboard element.
+			try
+			{
+				var clipRange = document.createRange();
+				clipRange.selectNodeContents(this.clipboardElt);
+				var clipSel = window.getSelection();
+
+				if (clipSel != null)
+				{
+					clipSel.removeAllRanges();
+					clipSel.addRange(clipRange);
+				}
+			}
+			catch (e)
+			{
+				// ignore
+			}
+
+			graph.container.scrollLeft = sx;
+			graph.container.scrollTop = sy;
+
+			return;
+		}
 
 		// Do not steal focus from input/textarea elements outside the graph
 		// container (e.g., Find/Replace dialog, Edit Data dialog) or from
@@ -6174,8 +6257,19 @@ EditorUi.prototype.showError = function(title, msg, btn, fn, retry, btn2, fn2, b
 {
 	var dlg = new ErrorDialog(this, title, msg, btn || mxResources.get('ok'),
 		fn, retry, btn2, fn2, hide, btn3, fn3);
-	var lines = Math.ceil((msg != null) ? msg.length / 50 : 1);
-	this.showDialog(dlg.container, w || 340, h || (100 + lines * 20), true, false, onClose);
+	// Auto-height (null) so the dialog fits the wrapped message; the content's
+	// max-height/overflow still caps very long messages at the viewport.
+	this.showDialog(dlg.container, w || 340, h, true, false, onClose);
+
+	// Auto-height fits the content exactly, which leaves the message area's
+	// overflow:auto a sub-pixel short and shows a spurious scrollbar. Nudge the
+	// dialog slightly taller so the flex message area has breathing room (no-op
+	// when the caller passed an explicit height).
+	if (h == null && this.dialog != null && this.dialog.container != null)
+	{
+		this.dialog.container.style.height = (this.dialog.container.offsetHeight + 16) + 'px';
+	}
+
 	dlg.init();
 };
 
@@ -6331,6 +6425,19 @@ EditorUi.prototype.ctrlEnter = function()
  */
 EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColorValue, singleColorMode, title, getColorFn)
 {
+	// The color tool window is a non-modal mxWindow that renders below the
+	// modal dialog backdrop, so it cannot be reached while a modal dialog is
+	// open. In that case fall back to the modal color dialog (Apply/Cancel)
+	// which stacks on top of the existing modal dialog.
+	if (this.dialog != null && this.dialog.bg != null &&
+		this.dialog.bg.parentNode != null)
+	{
+		this.pickColorModal(color, apply, defaultColor, defaultColorValue,
+			singleColorMode, title);
+
+		return;
+	}
+
 	var graph = this.editor.graph;
 	var selState = graph.cellEditor.saveSelection();
 
@@ -6379,6 +6486,68 @@ EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColor
 		title || mxResources.get('fillColor'),
 		defaultColor, defaultColorValue, singleColorMode,
 		getColorFn);
+};
+
+/**
+ * Displays a modal color dialog with Apply and Cancel buttons. Use this
+ * variant when picking a color from within another modal dialog, where the
+ * non-modal color tool window (see pickColor) would be hidden behind the
+ * modal backdrop. The dialog stacks on top of the existing modal dialog and
+ * closes on Apply or Cancel. pickColor delegates here automatically when a
+ * modal dialog is already showing. The optional cancelFn runs on Cancel/Esc.
+ */
+EditorUi.prototype.pickColorModal = function(color, apply, defaultColor, defaultColorValue, singleColorMode, title, cancelFn)
+{
+	var graph = this.editor.graph;
+	var selState = graph.cellEditor.saveSelection();
+
+	var dlg = new ColorDialog(this, color, function(color)
+	{
+		graph.cellEditor.restoreSelection(selState);
+
+		if (apply != null)
+		{
+			apply(color);
+		}
+	}, function()
+	{
+		graph.cellEditor.restoreSelection(selState);
+
+		if (cancelFn != null)
+		{
+			cancelFn();
+		}
+	}, defaultColor, defaultColorValue, singleColorMode);
+
+	// Shows the property name as a heading (the tool window puts it in its
+	// title bar; the modal dialog has no title bar, so prepend it instead)
+	if (title != null)
+	{
+		var hd = document.createElement('div');
+		hd.style.cssText = 'width:100%;text-align:center;font-weight:bold;' +
+			'margin-bottom:10px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis';
+		mxUtils.write(hd, title);
+		dlg.container.insertBefore(hd, dlg.container.firstChild);
+	}
+
+	// Height is null so the dialog auto-fits its content (collapsed advanced
+	// section). The picker's slider box overflows its 230px div to ~237px
+	// (overflow: visible), so the content box needs to be a bit wider than
+	// 230 to avoid clipping it on the right (the tool window leaves the same
+	// slack). Height auto-fits to the content.
+	this.showDialog(dlg.container, 250, null, true, false);
+
+	// Re-fits the modal dialog to its content when the advanced/dark section
+	// is toggled, mirroring the tool window's fitHeight behavior. The 48px
+	// accounts for the .geDialog padding (same as showDialog's auto-size).
+	var dialogContainer = this.dialog.container;
+
+	dlg.resizeFn = function()
+	{
+		dialogContainer.style.height = (dlg.container.scrollHeight + 48) + 'px';
+	};
+
+	dlg.init();
 };
 
 /**
@@ -6616,17 +6785,78 @@ EditorUi.prototype.save = function(name)
 /**
  * Executes the given array of graph layouts using executeLayout and
  * calls done after the last layout has finished.
+ *
+ * If any layout in the chain has a `prepare(parent, cb)` method (the ELK
+ * bridge signature), runs them sequentially via that async API instead of
+ * the synchronous mxCompositeLayout — each layout's apply() runs inside its
+ * own executeLayout call so morph animation triggers between steps. Pure-mx
+ * chains keep the original composite path so behaviour stays byte-identical.
  */
 EditorUi.prototype.executeLayouts = function(layouts, post)
 {
-	this.executeLayout(mxUtils.bind(this, function()
-	{
-		var layout = new mxCompositeLayout(this.editor.graph, layouts);
-		var cells = this.editor.graph.getSelectionCells();
+	var hasAsync = false;
 
-		layout.execute(this.editor.graph.getDefaultParent(),
-			cells.length == 0 ? null : cells);
-	}), true, post);
+	for (var i = 0; i < layouts.length; i++)
+	{
+		if (typeof layouts[i].prepare === 'function')
+		{
+			hasAsync = true;
+			break;
+		}
+	}
+
+	if (!hasAsync)
+	{
+		this.executeLayout(mxUtils.bind(this, function()
+		{
+			var layout = new mxCompositeLayout(this.editor.graph, layouts);
+			var cells = this.editor.graph.getSelectionCells();
+
+			layout.execute(this.editor.graph.getDefaultParent(),
+				cells.length == 0 ? null : cells);
+		}), true, post);
+	}
+	else
+	{
+		var self = this;
+		var graph = this.editor.graph;
+		var parent = graph.getDefaultParent();
+		var idx = 0;
+
+		var next = function()
+		{
+			if (idx >= layouts.length)
+			{
+				if (post != null) post();
+				return;
+			}
+
+			var layout = layouts[idx++];
+
+			if (typeof layout.prepare === 'function')
+			{
+				layout.prepare(parent, function(err, apply)
+				{
+					if (err != null)
+					{
+						self.handleError(err);
+						return;
+					}
+
+					self.executeLayout(apply, true, next);
+				});
+			}
+			else
+			{
+				self.executeLayout(function()
+				{
+					layout.execute(parent);
+				}, true, next);
+			}
+		};
+
+		next();
+	}
 };
 
 /**

@@ -124,6 +124,7 @@ DrawioConfigEditor.install = function(container, options)
 		],
 		'export-toggles': [
 			{ key: 'compressXml', name: 'Compress XML', help: 'Compress XML output in saved files' },
+			{ key: 'compressStyles', name: 'Compress Styles', help: 'Deduplicate repeated inline images and stencils into a shared lookup table. Only readable by draw.io 29.3.1 and later.', experimental: true, helpLink: 'https://github.com/jgraph/drawio/discussions/5649' },
 			{ key: 'includeDiagram', name: 'Include Diagram in Export', help: 'Include diagram data in export dialogs' },
 			{ key: 'enableExportUrl', name: 'Enable Export URL', help: 'Enable the export URL feature' },
 			{ key: 'lockdown', name: 'Lockdown', help: 'Disable data transmission apart from storage' },
@@ -191,10 +192,15 @@ DrawioConfigEditor.install = function(container, options)
 			var html = '';
 			toggleGroups[containerId].forEach(function(toggle)
 			{
+				var badge = toggle.experimental ?
+					' <span class="toggle-field__experimental" title="Experimental feature">experimental</span>' : '';
+				var helpIcon = toggle.helpLink ?
+					' <a class="toggle-field__helplink" href="' + toggle.helpLink + '" target="_blank" rel="noopener" title="Learn more">?</a>' : '';
+
 				html += '<div class="toggle-field">' +
 					'<div class="toggle-field__label">' +
-						'<span class="toggle-field__name">' + toggle.name + '</span>' +
-						'<span class="toggle-field__help">' + toggle.help + ' <code>' + toggle.key + '</code></span>' +
+						'<span class="toggle-field__name">' + toggle.name + badge + '</span>' +
+						'<span class="toggle-field__help">' + toggle.help + ' <code>' + toggle.key + '</code>' + helpIcon + '</span>' +
 					'</div>' +
 					'<div class="tri-toggle" data-key="' + toggle.key + '">' +
 						'<button type="button" data-value="unset" class="active--unset" title="Not set (use default)">&#8212;</button>' +
@@ -1226,6 +1232,17 @@ DrawioConfigEditor.css = [
 	'.geConfigEditor .toggle-field__label { display: flex; flex-direction: column; gap: 1px; flex: 1; margin-bottom: 0; }',
 	'.geConfigEditor .toggle-field__name { font-weight: 500; font-size: var(--font-size-sm); }',
 	'.geConfigEditor .toggle-field__help { font-size: var(--font-size-xs); color: light-dark(var(--color-text-secondary), var(--color-text-secondary-dark)); }',
+	'.geConfigEditor .toggle-field__experimental {',
+	'  display: inline-block; margin-left: 4px; padding: 0 5px; border-radius: 8px; vertical-align: middle;',
+	'  font-size: 9px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em;',
+	'  color: light-dark(#8a5a00, #f0b429); background: light-dark(#fff3d6, rgba(240, 180, 41, 0.15));',
+	'}',
+	'.geConfigEditor .toggle-field__helplink {',
+	'  display: inline-flex; align-items: center; justify-content: center; width: 13px; height: 13px;',
+	'  margin-left: 4px; border-radius: 50%; vertical-align: middle; text-decoration: none;',
+	'  font-size: 9px; font-weight: 700; line-height: 1;',
+	'  color: light-dark(#fff, #1a1a1a); background: light-dark(var(--color-text-secondary), var(--color-text-secondary-dark));',
+	'}',
 	'.geConfigEditor .tri-toggle {',
 	'  display: inline-flex; border: 1px solid light-dark(var(--color-border), var(--color-border-dark));',
 	'  border-radius: var(--radius-md); overflow: hidden; flex-shrink: 0;',

@@ -673,13 +673,30 @@ Editor.extractGraphModelFromPng = function(data)
 			if (type == 'zTXt')
 			{
 				var idx = value.indexOf(String.fromCharCode(0));
-				
-				if (value.substring(0, idx) == 'mxGraphModel')
+				var keyword = value.substring(0, idx);
+
+				if (keyword == 'mxGraphModel' || keyword == 'mxfile')
 				{
+					// Compressed payload starts after the keyword null and the
+					// 1-byte compression method (idx + 2).
+					var buffer = Graph.stringToArrayBuffer(value.substring(idx + 2));
+					var xmlData = null;
+
+					try
+					{
+						// Spec-compliant zTXt is a zlib (RFC 1950) datastream
+						xmlData = pako.inflate(buffer, {to: 'string'});
+					}
+					catch (e)
+					{
+						// Fallback for PNGs written by the pre-fix CLI, which
+						// stored a raw DEFLATE stream [jgraph/drawio-desktop#2425]
+						xmlData = pako.inflateRaw(buffer, {to: 'string'});
+					}
+
 					// Workaround for Java URL Encoder using + for spaces, which isn't compatible with JS
-					var xmlData = pako.inflateRaw(Graph.stringToArrayBuffer(
-						value.substring(idx + 2)), {to: 'string'}).replace(/\+/g,' ');
-					
+					xmlData = (xmlData != null) ? xmlData.replace(/\+/g,' ') : null;
+
 					if (xmlData != null && xmlData.length > 0)
 					{
 						result = xmlData;
@@ -1655,6 +1672,14 @@ Dialog.prototype.getPosition = function(left, top)
 
 /**
  * Adds a resize handler to the dialog.
+ *
+ * In addition to the bottom-right `resize.gif` corner, installs
+ * transparent edge / corner handles on every other side via
+ * `installDialogEdgeResizeHandles` so users can resize the dialog
+ * from any side — same affordance native OS windows provide. The
+ * Dialog is center-positioned, so each handle grows / shrinks the
+ * container symmetrically (`2 * dx` / `2 * dy`); the centering CSS
+ * takes care of repositioning.
  */
 Dialog.prototype.addResizeHandler = function(minSize)
 {
@@ -1666,55 +1691,276 @@ Dialog.prototype.addResizeHandler = function(minSize)
 	resize.style.right = '0px';
 	resize.style.zIndex = '2';
 
-	var startX = null;
-	var startY = null;
-	var width = null;
-	var height = null;
-	
-	var start = mxUtils.bind(this, function(evt)
+	var self = this;
+	var commitResize = function()
 	{
-		startX = mxEvent.getClientX(evt);
-		startY = mxEvent.getClientY(evt);
-		width = parseInt(this.container.style.width);
-		height = parseInt(this.container.style.height);
-		mxEvent.addGestureListeners(document, null, dragHandler, dropHandler);
-		mxEvent.consume(evt);
-	});
-
-	// Adds a temporary pair of listeners to intercept
-	// the gesture event in the document
-	var dragHandler = mxUtils.bind(this, function(evt)
-	{
-		if (startX != null && startY != null)
+		if (typeof self.onResize === 'function')
 		{
+			self.onResize(parseInt(self.container.style.width),
+				parseInt(self.container.style.height));
+		}
+	};
+
+	var addHandle = function(el, edges)
+	{
+		var startX = null, startY = null, startW = null, startH = null;
+
+		var start = function(evt)
+		{
+			startX = mxEvent.getClientX(evt);
+			startY = mxEvent.getClientY(evt);
+			startW = parseInt(self.container.style.width);
+			startH = parseInt(self.container.style.height);
+			mxEvent.addGestureListeners(document, null, drag, drop);
+			mxEvent.consume(evt);
+		};
+
+		var drag = function(evt)
+		{
+			if (startX == null) return;
 			var dx = mxEvent.getClientX(evt) - startX;
 			var dy = mxEvent.getClientY(evt) - startY;
-			this.container.style.width = Math.max(minSize.width, (width + 2 * dx)) + 'px';
-			this.container.style.height = Math.max(minSize.height, (height + 2 * dy)) + 'px';
-			mxEvent.consume(evt);
-		}
-	});
-	
-	var dropHandler = mxUtils.bind(this, function(evt)
-	{
-		if (startX != null && startY != null)
-		{
-			startX = null;
-			startY = null;
-			mxEvent.removeGestureListeners(document, null, dragHandler, dropHandler);
-			mxEvent.consume(evt);
+			var w = startW, h = startH;
 
-			if (typeof this.onResize === 'function')
+			// 2 * delta so the dialog grows / shrinks symmetrically
+			// around its CSS-centered position. The signs differ per
+			// edge: dragging the bottom or right outward (+dx/+dy)
+			// grows; dragging the top or left outward (-dx/-dy on
+			// the inside) shrinks the negative direction, hence the
+			// `- 2 *` for `t` / `l`.
+			if (edges.indexOf('r') >= 0) w += 2 * dx;
+			if (edges.indexOf('l') >= 0) w -= 2 * dx;
+			if (edges.indexOf('b') >= 0) h += 2 * dy;
+			if (edges.indexOf('t') >= 0) h -= 2 * dy;
+
+			self.container.style.width  = Math.max(minSize.width,  w) + 'px';
+			self.container.style.height = Math.max(minSize.height, h) + 'px';
+			mxEvent.consume(evt);
+		};
+
+		var drop = function(evt)
+		{
+			if (startX == null) return;
+			startX = null; startY = null;
+			mxEvent.removeGestureListeners(document, null, drag, drop);
+			mxEvent.consume(evt);
+			commitResize();
+		};
+
+		mxEvent.addGestureListeners(el, start, drag, drop);
+	};
+
+	addHandle(resize, 'br');
+	this.container.appendChild(resize);
+	installDialogEdgeResizeHandles(this.container, addHandle);
+};
+
+/**
+ * Appends 7 transparent edge / corner resize handles (skipping the
+ * bottom-right corner, which the caller already owns) to the given
+ * container. Each handle delegates to the supplied `addHandle(el,
+ * edges)` callback so the host (Dialog or mxWindow) can apply its own
+ * resize math.
+ */
+function installDialogEdgeResizeHandles(container, addHandle)
+{
+	// Edge codes: t/b/l/r — which sides of the window this handle moves.
+	// The bottom-right (`br`) is skipped because the caller already
+	// installed a handle there (Dialog ships an <img>, mxWindow's
+	// setResizable does the same).
+	var configs = [
+		{styles: 'top:0;left:0;width:8px;height:8px;',
+			cursor: 'nw-resize', edges: 'tl'},
+		{styles: 'top:0;left:8px;right:8px;height:4px;',
+			cursor: 'n-resize',  edges: 't'},
+		{styles: 'top:0;right:0;width:8px;height:8px;',
+			cursor: 'ne-resize', edges: 'tr'},
+		// Right and bottom edges stop short of the bottom-right corner
+		// handle (~14px) so dragging the edge doesn't accidentally
+		// trigger the corner.
+		{styles: 'top:8px;right:0;bottom:14px;width:4px;',
+			cursor: 'e-resize',  edges: 'r'},
+		{styles: 'bottom:0;left:0;width:8px;height:8px;',
+			cursor: 'sw-resize', edges: 'bl'},
+		{styles: 'bottom:0;left:8px;right:14px;height:4px;',
+			cursor: 's-resize',  edges: 'b'},
+		{styles: 'top:8px;left:0;bottom:8px;width:4px;',
+			cursor: 'w-resize',  edges: 'l'}
+	];
+
+	var handles = [];
+
+	configs.forEach(function(cfg)
+	{
+		var h = document.createElement('div');
+		h.style.cssText = 'position:absolute;z-index:2;' +
+			cfg.styles + 'cursor:' + cfg.cursor;
+		addHandle(h, cfg.edges);
+		container.appendChild(h);
+		handles.push(h);
+	});
+
+	return handles;
+}
+
+/**
+ * Default mxWindow.setResizable only installs a single bottom-right
+ * <img> handle. Wrap it so every resizable mxWindow also gets
+ * transparent handles on the other three corners and the four edges —
+ * matching the resize affordance native windows on Windows / macOS
+ * provide. The added handles are reused across toggles (cached on the
+ * window via `_edgeResizeHandles`) and hidden / shown together with
+ * the built-in handle.
+ */
+(function()
+{
+	var mxWindowSetResizable = mxWindow.prototype.setResizable;
+
+	mxWindow.prototype.setResizable = function(resizable)
+	{
+		mxWindowSetResizable.apply(this, arguments);
+
+		if (resizable)
+		{
+			if (this._edgeResizeHandles == null)
 			{
-				this.onResize(parseInt(this.container.style.width),
-					parseInt(this.container.style.height));
+				this._edgeResizeHandles = installMxWindowEdgeResizeHandles(this);
+			}
+			else
+			{
+				this._edgeResizeHandles.forEach(function(h)
+				{
+					h.style.display = '';
+				});
 			}
 		}
-	});
+		else if (this._edgeResizeHandles != null)
+		{
+			this._edgeResizeHandles.forEach(function(h)
+			{
+				h.style.display = 'none';
+			});
+		}
+	};
+})();
 
-	mxEvent.addGestureListeners(resize, start, dragHandler, dropHandler);
-	this.container.appendChild(resize);
-};
+/**
+ * Builds the 7 edge / corner resize handles for an mxWindow. The
+ * mxWindow positions itself via setLocation / setSize (no CSS centering),
+ * so each handle moves the opposite edge to keep the anchor edge fixed.
+ * Fires RESIZE_START / RESIZE / RESIZE_END so the persistence listeners
+ * pick up the new size. If the window is docked, fires MOVE_START /
+ * MOVE_END first so the docking wrapper undocks before resizing (the
+ * dock wrapper otherwise blocks setLocation when dockState is set).
+ */
+function installMxWindowEdgeResizeHandles(wnd)
+{
+	var minSize = wnd.minimumSize || new mxRectangle(0, 0, 50, 40);
+
+	var addHandle = function(el, edges)
+	{
+		var startX = null, startY = null;
+		var startWinX, startWinY, startW, startH;
+
+		var down = function(evt)
+		{
+			wnd.activate();
+
+			if (wnd.dockState != null)
+			{
+				wnd.fireEvent(new mxEventObject(mxEvent.MOVE_START, 'event', evt));
+				wnd.fireEvent(new mxEventObject(mxEvent.MOVE_END,   'event', evt));
+			}
+
+			startX = mxEvent.getClientX(evt);
+			startY = mxEvent.getClientY(evt);
+			startWinX = wnd.getX();
+			startWinY = wnd.getY();
+			// Use style.width/height (CSS content size — what setSize
+			// writes) rather than offsetWidth/Height (which includes
+			// borders). Using offsetWidth here makes the anchor edge
+			// drift by exactly the border width when dragging the
+			// opposite edge: setSize would re-apply the dragged size to
+			// style.width, but the new offsetWidth would then be
+			// border-larger than the original, shifting the anchor.
+			startW = parseInt(wnd.div.style.width) || wnd.div.offsetWidth;
+			startH = parseInt(wnd.div.style.height) || wnd.div.offsetHeight;
+
+			mxEvent.addGestureListeners(document, null, move, up);
+			wnd.fireEvent(new mxEventObject(mxEvent.RESIZE_START, 'event', evt));
+			mxEvent.consume(evt);
+		};
+
+		var move = function(evt)
+		{
+			if (startX == null) return;
+			var dx = mxEvent.getClientX(evt) - startX;
+			var dy = mxEvent.getClientY(evt) - startY;
+
+			var newX = startWinX, newY = startWinY;
+			var newW = startW, newH = startH;
+
+			if (edges.indexOf('t') >= 0)
+			{
+				newY = startWinY + dy;
+				newH = startH - dy;
+			}
+			if (edges.indexOf('b') >= 0)
+			{
+				newH = startH + dy;
+			}
+			if (edges.indexOf('l') >= 0)
+			{
+				newX = startWinX + dx;
+				newW = startW - dx;
+			}
+			if (edges.indexOf('r') >= 0)
+			{
+				newW = startW + dx;
+			}
+
+			if (newW < minSize.width)
+			{
+				if (edges.indexOf('l') >= 0)
+				{
+					newX = startWinX + startW - minSize.width;
+				}
+				newW = minSize.width;
+			}
+			if (newH < minSize.height)
+			{
+				if (edges.indexOf('t') >= 0)
+				{
+					newY = startWinY + startH - minSize.height;
+				}
+				newH = minSize.height;
+			}
+
+			if (newX !== startWinX || newY !== startWinY)
+			{
+				wnd.setLocation(newX, newY);
+			}
+			wnd.setSize(newW, newH);
+
+			wnd.fireEvent(new mxEventObject(mxEvent.RESIZE, 'event', evt));
+			mxEvent.consume(evt);
+		};
+
+		var up = function(evt)
+		{
+			if (startX == null) return;
+			startX = null;
+			startY = null;
+			mxEvent.removeGestureListeners(document, null, move, up);
+			wnd.fireEvent(new mxEventObject(mxEvent.RESIZE_END, 'event', evt));
+			mxEvent.consume(evt);
+		};
+
+		mxEvent.addGestureListeners(el, down, move, up);
+	};
+
+	return installDialogEdgeResizeHandles(wnd.div, addHandle);
+}
 
 /**
  * Removes the dialog from the DOM.
@@ -2413,6 +2659,181 @@ var PageSetupDialog = function(editorUi)
 	adaptiveSection.appendChild(adaptiveRow);
 	div.appendChild(adaptiveSection);
 
+	// Initial view section — lets the author pin the page's opening viewport
+	// (pan + zoom). Stored on the diagram node via ChangePageView and restored
+	// by EditorUi.fitInitialView on the fitDiagramOnLoad / fitDiagramOnPage
+	// paths. Pages live in the diagramly layer, so the section (and its apply
+	// below) are skipped when there is no current page (e.g. bare grapheditor).
+	var pendingViewBox, viewBoxChanged;
+
+	if (editorUi.currentPage != null)
+	{
+		pendingViewBox = editorUi.currentPage.getViewBox();
+		viewBoxChanged = false;
+
+		var viewSection = document.createElement('div');
+		viewSection.className = 'geDialogSection';
+
+		var viewRow = document.createElement('div');
+		viewRow.className = 'geDialogFormRow';
+
+		var viewLabel = document.createElement('span');
+		viewLabel.className = 'geDialogFormLabel';
+		mxUtils.write(viewLabel,
+			mxResources.get('initialView', null, 'Initial view') + ':');
+		viewRow.appendChild(styleLabel(viewLabel));
+
+		var viewContent = document.createElement('div');
+		viewContent.style.flex = '1';
+		viewContent.style.minWidth = '0';
+		viewContent.style.display = 'flex';
+		viewContent.style.alignItems = 'center';
+
+		var viewStatus = document.createElement('span');
+		viewStatus.style.flex = '1 1 auto';
+		viewStatus.style.minWidth = '0';
+		viewStatus.style.overflow = 'hidden';
+		viewStatus.style.textOverflow = 'ellipsis';
+		viewStatus.style.whiteSpace = 'nowrap';
+		viewStatus.style.fontSize = '12px';
+		viewStatus.style.color = 'light-dark(#6e6e73,#a0a0a0)';
+
+		var updateViewStatus = function()
+		{
+			var label;
+
+			if (pendingViewBox != null)
+			{
+				label = pendingViewBox.x + ', ' + pendingViewBox.y;
+
+				if (pendingViewBox.scale != null)
+				{
+					label += ' · ' + Math.round(pendingViewBox.scale * 100) + '%';
+				}
+			}
+			else
+			{
+				label = mxResources.get('default');
+			}
+
+			viewStatus.textContent = label;
+		};
+
+		updateViewStatus();
+		viewContent.appendChild(viewStatus);
+
+		viewRow.appendChild(styleContent(viewContent));
+		viewSection.appendChild(viewRow);
+
+		// Action buttons sit on their own full-width row. geBtn is display:flex,
+		// so its text-overflow:ellipsis never renders; squeezed into the
+		// label-indented content column the long translations (German "Aktuelle
+		// übernehmen" / "Zurücksetzen") would be hard-clipped on both ends. A
+		// dedicated row gives them the full section width, and flexShrink:0 keeps
+		// each label intact (wrapping only as a last resort for longer locales).
+		var viewButtonRow = document.createElement('div');
+		viewButtonRow.className = 'geDialogFormRow';
+		viewButtonRow.style.justifyContent = 'flex-end';
+		viewButtonRow.style.flexWrap = 'wrap';
+		viewButtonRow.style.gap = '8px';
+
+		var useCurrentViewBtn = mxUtils.button(mxResources.get('useCurrent'), function()
+		{
+			pendingViewBox = graph.getCurrentViewBox();
+			viewBoxChanged = true;
+			updateViewStatus();
+		});
+		useCurrentViewBtn.className = 'geBtn';
+		useCurrentViewBtn.style.margin = '0px';
+		useCurrentViewBtn.style.flexShrink = '0';
+		viewButtonRow.appendChild(useCurrentViewBtn);
+
+		var resetViewBtn = mxUtils.button(mxResources.get('reset'), function()
+		{
+			pendingViewBox = null;
+			viewBoxChanged = true;
+			updateViewStatus();
+		});
+		resetViewBtn.className = 'geBtn';
+		resetViewBtn.style.margin = '0px';
+		resetViewBtn.style.flexShrink = '0';
+		viewButtonRow.appendChild(resetViewBtn);
+
+		viewSection.appendChild(viewButtonRow);
+		div.appendChild(viewSection);
+	}
+
+	// Lightbox animation section — entry point for the page-level
+	// animation editor. The animation auto-plays when the page is
+	// viewed in chromeless / lightbox mode. AnimationDialog isn't part
+	// of the grapheditor layer, so we guard the section with a
+	// `typeof` check; in builds without the diagramly layer (rare —
+	// only the bare-bones grapheditor demo) the row is skipped.
+	if (typeof AnimationDialog !== 'undefined')
+	{
+		var animationSection = document.createElement('div');
+		animationSection.className = 'geDialogSection';
+
+		var animationRow = document.createElement('div');
+		animationRow.className = 'geDialogFormRow';
+
+		var animationLabel = document.createElement('span');
+		animationLabel.className = 'geDialogFormLabel';
+		mxUtils.write(animationLabel,
+			mxResources.get('lightboxAnimation', null, 'Lightbox animation') + ':');
+		animationRow.appendChild(styleLabel(animationLabel));
+
+		var animationContent = document.createElement('div');
+		animationContent.style.flex = '1';
+		animationContent.style.minWidth = '0';
+		animationContent.style.display = 'flex';
+		animationContent.style.alignItems = 'center';
+		animationContent.style.gap = '8px';
+
+		var animationHint = document.createElement('span');
+		animationHint.style.flex = '1 1 auto';
+		animationHint.style.minWidth = '0';
+		animationHint.style.fontSize = '12px';
+		animationHint.style.color = 'light-dark(#6e6e73,#a0a0a0)';
+		mxUtils.write(animationHint,
+			mxResources.get('lightboxAnimationHint', null,
+				'Plays automatically when the page is shown in lightbox mode.'));
+		animationContent.appendChild(animationHint);
+
+		var editAnimBtn = mxUtils.button(
+			mxResources.get('edit', null, 'Edit'),
+			function()
+			{
+				// Close Page Setup first so the non-modal AnimationDialog
+				// isn't obscured by the modal backdrop. The user can
+				// reopen Page Setup afterwards.
+				editorUi.hideDialog();
+
+				// Reuse the singleton animation window (also opened via the
+				// 'animation' action) instead of stacking a new dialog. The
+				// action's handler creates it on first use and wires up
+				// window-state persistence.
+				var menus = editorUi.menus;
+
+				if (menus != null && menus.animationWindow != null)
+				{
+					menus.animationWindow.window.setVisible(true);
+					menus.animationWindow.window.activate();
+				}
+				else if (editorUi.actions.get('animation') != null)
+				{
+					editorUi.actions.get('animation').funct();
+				}
+			});
+		editAnimBtn.className = 'geBtn';
+		editAnimBtn.style.minWidth = '90px';
+		animationContent.appendChild(editAnimBtn);
+
+		animationRow.appendChild(styleContent(animationContent));
+		animationSection.appendChild(animationRow);
+		div.appendChild(animationSection);
+	}
+
 	// Apply function
 	var applyFn = function()
 	{
@@ -2455,7 +2876,31 @@ var PageSetupDialog = function(editorUi)
 		{
 			graph.model.execute(change);
 		}
+
+		// Applies an initial-view change (Use Current / Reset). Guarded on the
+		// current page so this stays a no-op outside the diagramly layer, where
+		// ChangePageView is not defined.
+		if (viewBoxChanged && editorUi.currentPage != null)
+		{
+			graph.model.execute(new ChangePageView(editorUi,
+				editorUi.currentPage, pendingViewBox));
+		}
 	};
+
+	// Exposes each button's own label as its tooltip so the full text stays
+	// available on hover even when a long translation is clipped to fit the
+	// dialog width (geBtn is display:flex, so text-overflow never renders).
+	var dialogButtons = div.querySelectorAll('.geBtn');
+
+	for (var i = 0; i < dialogButtons.length; i++)
+	{
+		var btnLabel = mxUtils.trim(dialogButtons[i].textContent);
+
+		if (dialogButtons[i].getAttribute('title') == null && btnLabel != '')
+		{
+			dialogButtons[i].setAttribute('title', btnLabel);
+		}
+	}
 
 	var dlg = new CustomDialog(editorUi, div, applyFn, null,
 		mxResources.get('apply'));

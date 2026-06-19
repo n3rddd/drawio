@@ -146,7 +146,8 @@ mxShapeMockupStepBar.prototype.customProperties = [
 	{name: 'mainText', dispName: 'Text', type: 'string'},
 	{name: 'textSize', dispName: 'Text Size', type: 'float'},
 	{name: 'textColor', dispName: 'Text Color', type: 'color', primary:true},
-	{name: 'textColor2', dispName: 'Text2 Color', type: 'color', primary:true}
+	{name: 'textColor2', dispName: 'Text2 Color', type: 'color', primary:true},
+	{name: 'haloColor', dispName: 'Halo Color', defVal: '#ffffff', type: 'color', primary:true}
 ];
 
 /**
@@ -336,8 +337,9 @@ mxShapeMockupStepBar.prototype.stepLineFg = function(c, w, h, buttonNum, buttonW
 			c.fillAndStroke();
 
 			c.setStrokeWidth(strokeWidth);
-			c.setFillColor('#ffffff');
-			c.setStrokeColor('#ffffff');
+			var haloColor = mxUtils.getValue(this.style, 'haloColor', '#ffffff');
+			c.setFillColor(haloColor);
+			c.setStrokeColor(haloColor);
 			c.begin();
 			c.ellipse(currWidth - size, midY - size, 2 * size, 2 * size);
 			c.fillAndStroke();
