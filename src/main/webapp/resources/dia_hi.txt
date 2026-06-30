@@ -443,6 +443,7 @@ importFrom=से आयात करें
 includeCopyOfMyDiagram=मेरे आरेख की एक प्रति शामिल करें
 increaseIndent=इंडेंट बढ़ाएँ
 decreaseIndent=इंडेंट घटाएँ
+inherit=इनहेरिट करें
 initialView=प्रारंभिक दृश्य
 insert=डालें
 insertColumnBefore=बाईं ओर कॉलम डालें

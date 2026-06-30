@@ -4829,8 +4829,420 @@ Graph.prototype.destroy = function()
 				this.model.endUpdate();
 			}
 		}
+		
+		// New self-loops are created in the converted state so they get one
+		// handle per segment (see createEdgeHandler)
+		this.model.beginUpdate();
+		try
+		{
+			for (var i = 0; i < edges.length; i++)
+			{
+				if (this.model.getTerminal(edges[i], false) == source)
+				{
+					this.applyLoopStyle(edges[i], source);
+				}
+			}
+		}
+		finally
+		{
+			this.model.endUpdate();
+		}
 	};
-	
+
+	/**
+	 * Applies the orthogonal loop style with inner waypoints to the given
+	 * self-loop edge so it gets one handle per segment (outgoing, middle and
+	 * incoming). The default waypoints reproduce the side and size of the
+	 * legacy loop routing (a small loop on the source's east side).
+	 */
+	Graph.prototype.applyLoopStyle = function(edge, source)
+	{
+		var sgeo = this.getCellGeometry(source);
+		var geo = this.getCellGeometry(edge);
+
+		if (sgeo != null && geo != null)
+		{
+			// Loop is large enough that its 5 handles (two terminals, two arms
+			// and the middle) are clearly separated and individually grabbable
+			var seg = this.gridSize;
+			var cx = sgeo.x + sgeo.width + 4 * seg;
+			var cy = sgeo.y + sgeo.height / 2;
+
+			geo = geo.clone();
+			geo.points = [new mxPoint(cx, cy - 2 * seg), new mxPoint(cx, cy + 2 * seg)];
+
+			this.model.beginUpdate();
+			try
+			{
+				this.model.setGeometry(edge, geo);
+				this.setCellStyles(mxConstants.STYLE_EDGE, 'orthogonalEdgeStyle', [edge]);
+				this.setCellStyles('innerLoopWaypoints', '1', [edge]);
+			}
+			finally
+			{
+				this.model.endUpdate();
+			}
+		}
+	};
+
+	/**
+	 * Returns which axis the source terminal's perimeter pins the connection
+	 * point to, or null for a regular boundary perimeter. The perimeter is probed
+	 * with a point far on each side of the center: a boundary perimeter moves the
+	 * anchor across the full width/height when the direction flips, a fixed-line
+	 * perimeter keeps it on a line so it barely moves along that axis. Returns 'x'
+	 * when the anchor is pinned to the vertical center line (a lifeline spine - so
+	 * the loop sits left/right of it), 'y' when pinned to the horizontal center
+	 * line (a horizontal backbone - loop sits above/below), else null. Such loops
+	 * may overlap the shape because the anchors stay on the line.
+	 */
+	Graph.prototype.getLoopFixedAxis = function(state)
+	{
+		var source = (state != null) ? state.getVisibleTerminalState(true) : null;
+
+		if (source == null || source.width == 0 || source.height == 0)
+		{
+			return null;
+		}
+
+		var view = state.view;
+
+		// A shape with no perimeter function (e.g. perimeter=none) makes
+		// view.getPerimeterPoint fall back to the shape center for every probe
+		// below, which would look like both axes are pinned to a line. Such a
+		// shape is a boundary shape (the loop must stay outside it), not a
+		// spine/backbone, so report no fixed anchor line.
+		if (view.getPerimeterFunction(source) == null)
+		{
+			return null;
+		}
+
+		var cx = source.getCenterX();
+		var cy = source.getCenterY();
+		var d = Math.max(source.width, source.height) + 100;
+		var pe = view.getPerimeterPoint(source, new mxPoint(cx + d, cy), false);
+		var pw = view.getPerimeterPoint(source, new mxPoint(cx - d, cy), false);
+		var pn = view.getPerimeterPoint(source, new mxPoint(cx, cy - d), false);
+		var ps = view.getPerimeterPoint(source, new mxPoint(cx, cy + d), false);
+
+		var fixedX = pe != null && pw != null &&
+			Math.abs(pe.x - pw.x) < source.width / 4;
+		var fixedY = pn != null && ps != null &&
+			Math.abs(pn.y - ps.y) < source.height / 4;
+
+		return fixedX ? 'x' : (fixedY ? 'y' : null);
+	};
+
+	/**
+	 * Returns true if the source terminal's perimeter pins the connection point
+	 * to a fixed internal line (see getLoopFixedAxis).
+	 */
+	Graph.prototype.loopHasFixedAnchorLine = function(state)
+	{
+		return this.getLoopFixedAxis(state) != null;
+	};
+
+	/**
+	 * Returns the two corner waypoints of a self-loop placed so its far (middle)
+	 * segment follows the mouse, moving the whole loop around the shape: the loop
+	 * jumps to the side nearest the mouse, the far segment sits at the mouse depth
+	 * (just outside the shape) and is centered under the mouse along that edge.
+	 * The loop width (distance between the arms) is preserved but capped to the
+	 * length of that side so the arms stay attached to the edge. Used by the
+	 * middle handle only; returns null if the loop is not a simple two-corner
+	 * loop.
+	 */
+	Graph.prototype.getLoopAroundPoints = function(state, point)
+	{
+		var source = (state != null) ? state.getVisibleTerminalState(true) : null;
+		var geo = (state != null) ? this.getCellGeometry(state.cell) : null;
+
+		if (source == null || point == null || geo == null)
+		{
+			return null;
+		}
+
+		var s = state.view.scale;
+		var tr = state.view.translate;
+		var o = state.origin;
+		var bx = source.x / s - tr.x - o.x;
+		var by = source.y / s - tr.y - o.y;
+		var bw = source.width / s;
+		var bh = source.height / s;
+		var mp = new mxPoint(point.x / s - tr.x - o.x, point.y / s - tr.y - o.y);
+
+		// Current corners come from the stored waypoints, or - for a loop that is
+		// still routed by the default Loop style (no waypoints yet) - from the
+		// routed absolute points. Falls back to a small default loop centred on
+		// the shape when neither is available (e.g. a center perimeter whose
+		// route collapses), so a valid two-corner loop is always produced.
+		var c1, c2;
+		var pts = state.absolutePoints;
+
+		if (geo.points != null && geo.points.length >= 2)
+		{
+			c1 = geo.points[0];
+			c2 = geo.points[geo.points.length - 1];
+		}
+		else if (pts != null && pts.length >= 4)
+		{
+			c1 = new mxPoint(pts[1].x / s - tr.x - o.x, pts[1].y / s - tr.y - o.y);
+			c2 = new mxPoint(pts[pts.length - 2].x / s - tr.x - o.x,
+				pts[pts.length - 2].y / s - tr.y - o.y);
+		}
+		else
+		{
+			c1 = new mxPoint(bx + bw / 2, by + bh / 2 - this.gridSize);
+			c2 = new mxPoint(bx + bw / 2, by + bh / 2 + this.gridSize);
+		}
+
+		var spreadIsX = Math.abs(c1.x - c2.x) >= Math.abs(c1.y - c2.y);
+		var width = Math.max(this.gridSize,
+			(spreadIsX) ? Math.abs(c1.x - c2.x) : Math.abs(c1.y - c2.y));
+		var minDepth = this.gridSize;
+
+		// Shapes whose perimeter pins the anchor to a fixed internal line (e.g. a
+		// lifeline spine, a backbone or a center perimeter) connect the message to
+		// that line, so the loop legitimately overlaps the shape. The far segment
+		// is then measured from the anchor line, not the shape edge, so dragging
+		// the middle handle towards the shape reduces the loop depth and dragging
+		// past the line flips the loop to the other side. Boundary perimeters
+		// (rectangle, ellipse, ...) connect on the boundary facing the loop and
+		// use the regular side-picking below.
+		var fixedAnchor = this.loopHasFixedAnchorLine(state);
+		var pts0 = state.absolutePoints;
+		var anchor = (pts0 != null && pts0[0] != null) ?
+			new mxPoint(pts0[0].x / s - tr.x - o.x, pts0[0].y / s - tr.y - o.y) : null;
+
+		if (fixedAnchor && anchor != null)
+		{
+			// The far segment follows the mouse along the depth axis and flips to
+			// the other side of the anchor line when dragged past it (a small
+			// dead zone keeps the loop from collapsing onto the anchor line). The
+			// cross axis follows the mouse so the loop can also be moved along the
+			// shape.
+			if (spreadIsX)
+			{
+				// Top or bottom loop: depth axis is y
+				var fy = (mp.y >= anchor.y) ? Math.max(anchor.y + minDepth, mp.y) :
+					Math.min(anchor.y - minDepth, mp.y);
+
+				return [new mxPoint(mp.x - width / 2, fy),
+					new mxPoint(mp.x + width / 2, fy)];
+			}
+			else
+			{
+				// Left or right loop: depth axis is x
+				var fx = (mp.x >= anchor.x) ? Math.max(anchor.x + minDepth, mp.x) :
+					Math.min(anchor.x - minDepth, mp.x);
+
+				return [new mxPoint(fx, mp.y - width / 2),
+					new mxPoint(fx, mp.y + width / 2)];
+			}
+		}
+
+		// Boundary perimeter: the loop attaches to the actual perimeter point
+		// facing the mouse, so the far segment depth is measured from the real
+		// outline (not the bounding box) and the loop hugs non-rectangular shapes
+		// instead of floating off their bounding-box corners. The arm bases are
+		// also pulled in until they project onto a real perimeter point, avoiding
+		// the dead zones where some perimeters (e.g. parallelogram) collapse the
+		// terminal to the shape centre.
+		var cxc = bx + bw / 2;
+		var cyc = by + bh / 2;
+
+		var perim = function(px, py, orth)
+		{
+			var pp = state.view.getPerimeterPoint(source,
+				new mxPoint((px + tr.x + o.x) * s, (py + tr.y + o.y) * s), orth);
+
+			return (pp != null) ?
+				new mxPoint(pp.x / s - tr.x - o.x, pp.y / s - tr.y - o.y) : null;
+		};
+
+		// True when the two arm bases do not project onto two distinct real
+		// perimeter points: either one lands on the centre fallback, or both land
+		// on (nearly) the same point - both of which render as a collapsed/lopsided
+		// loop (e.g. two arms of a flat loop projecting to the same slanted-edge
+		// point). Uses the orthogonal projection to match how the terminal point is
+		// computed (getFloatingTerminalPoint), so the dead zones match exactly.
+		var loopBad = function(ax, ay, bx2, by2)
+		{
+			var pa = perim(ax, ay, true);
+			var pb = perim(bx2, by2, true);
+
+			if (pa == null || pb == null)
+			{
+				return true;
+			}
+
+			if ((Math.abs(pa.x - cxc) < 2 && Math.abs(pa.y - cyc) < 2) ||
+				(Math.abs(pb.x - cxc) < 2 && Math.abs(pb.y - cyc) < 2))
+			{
+				return true;
+			}
+
+			return Math.abs(pa.x - pb.x) < minDepth / 2 &&
+				Math.abs(pa.y - pb.y) < minDepth / 2;
+		};
+
+		// Perimeter point facing the mouse gives the loop side and the depth
+		var ap = perim(mp.x, mp.y, false);
+
+		if (ap == null || (Math.abs(ap.x - cxc) < 1 && Math.abs(ap.y - cyc) < 1))
+		{
+			ap = new mxPoint(cxc, cyc);
+		}
+
+		if (Math.abs(ap.y - cyc) >= Math.abs(ap.x - cxc))
+		{
+			// Top or bottom: arms spread horizontally (never below the gridSize
+			// floor, so the two arms cannot coincide on a thin/zero-width shape)
+			width = Math.max(this.gridSize, Math.min(width, bw));
+			var fy = (ap.y >= cyc) ? Math.max(ap.y + minDepth, mp.y) :
+				Math.min(ap.y - minDepth, mp.y);
+			var cx = Math.max(bx + width / 2, Math.min(bx + bw - width / 2, mp.x));
+
+			for (var i = 0; i <= bw / this.gridSize && loopBad(cx - width / 2, fy,
+				cx + width / 2, fy); i++)
+			{
+				cx = (cx < cxc) ? Math.min(cxc, cx + this.gridSize) :
+					Math.max(cxc, cx - this.gridSize);
+			}
+
+			// Then pushes the segment further out until both arm bases clear the
+			// outline (a slanted corner can project the terminal to the centre even
+			// at the bounding-box edge, so moving outward escapes that dead band)
+			var outY = (ap.y >= cyc) ? this.gridSize : -this.gridSize;
+
+			for (var i = 0; i <= (bw + bh) / this.gridSize && loopBad(cx - width / 2, fy,
+				cx + width / 2, fy); i++)
+			{
+				fy += outY;
+			}
+
+			return [new mxPoint(cx - width / 2, fy), new mxPoint(cx + width / 2, fy)];
+		}
+		else
+		{
+			// Right or left: arms spread vertically (never below the gridSize
+			// floor, so the two arms cannot coincide on a thin/zero-height shape)
+			width = Math.max(this.gridSize, Math.min(width, bh));
+			var fx = (ap.x >= cxc) ? Math.max(ap.x + minDepth, mp.x) :
+				Math.min(ap.x - minDepth, mp.x);
+			var cy = Math.max(by + width / 2, Math.min(by + bh - width / 2, mp.y));
+
+			for (var i = 0; i <= bh / this.gridSize && loopBad(fx, cy - width / 2,
+				fx, cy + width / 2); i++)
+			{
+				cy = (cy < cyc) ? Math.min(cyc, cy + this.gridSize) :
+					Math.max(cyc, cy - this.gridSize);
+			}
+
+			// Then pushes the segment further out until both arm bases clear the
+			// outline (a slanted corner can project the terminal to the centre even
+			// at the bounding-box edge, so moving outward escapes that dead band)
+			var outX = (ap.x >= cxc) ? this.gridSize : -this.gridSize;
+
+			for (var i = 0; i <= (bw + bh) / this.gridSize && loopBad(fx, cy - width / 2,
+				fx, cy + width / 2); i++)
+			{
+				fx += outX;
+			}
+
+			return [new mxPoint(fx, cy - width / 2), new mxPoint(fx, cy + width / 2)];
+		}
+	};
+
+	/**
+	 * Keeps the waypoints of a self-loop outside its shape so that the terminal
+	 * anchors stay on the shape perimeter (the edge the loop sits against)
+	 * instead of collapsing to the shape center when a waypoint is dragged into
+	 * the shape. The loop's "home" edge is the one its body extends past the
+	 * most; any waypoint inside the shape is pushed out to that edge so the
+	 * adjacent terminal exits perpendicular to it.
+	 */
+	Graph.prototype.keepLoopOutsideShape = function(state, points)
+	{
+		var source = (state != null) ? state.getVisibleTerminalState(true) : null;
+
+		if (source == null || points == null || points.length == 0)
+		{
+			return points;
+		}
+
+		var s = state.view.scale;
+		var tr = state.view.translate;
+		var o = state.origin;
+		var bx = source.x / s - tr.x - o.x;
+		var by = source.y / s - tr.y - o.y;
+		var bw = source.width / s;
+		var bh = source.height / s;
+
+		// Shapes whose perimeter pins the anchor to a fixed internal line (e.g. a
+		// lifeline spine) may overlap, so the waypoints are left as-is (the
+		// anchors do not collapse to the center). Other shapes keep the loop out.
+		if (this.loopHasFixedAnchorLine(state))
+		{
+			return points;
+		}
+
+		var cxc = bx + bw / 2;
+		var cyc = by + bh / 2;
+		var m = this.gridSize;
+		var result = [];
+
+		for (var i = 0; i < points.length; i++)
+		{
+			var p = points[i];
+
+			if (p == null)
+			{
+				result.push(p);
+				continue;
+			}
+
+			var q = new mxPoint(p.x, p.y);
+
+			// A waypoint counts as inside only when it is closer to the centre
+			// than the actual perimeter in its direction, so a point in an empty
+			// bounding-box corner (triangle, parallelogram, ...) is left alone and
+			// the loop can hug the real outline. Inside points are pushed just past
+			// the perimeter along their own ray so the adjacent terminal projects
+			// to a real perimeter point instead of collapsing to the centre.
+			var pp = state.view.getPerimeterPoint(source,
+				new mxPoint((p.x + tr.x + o.x) * s, (p.y + tr.y + o.y) * s), false);
+
+			if (pp != null)
+			{
+				var ppx = pp.x / s - tr.x - o.x;
+				var ppy = pp.y / s - tr.y - o.y;
+				var ux = p.x - cxc;
+				var uy = p.y - cyc;
+				var dp = Math.sqrt(ux * ux + uy * uy);
+				var dpp = Math.sqrt((ppx - cxc) * (ppx - cxc) + (ppy - cyc) * (ppy - cyc));
+
+				if (dp < dpp - 0.5)
+				{
+					// Degenerate centre point: push straight down by default
+					if (dp < 1)
+					{
+						ux = 0;
+						uy = 1;
+						dp = 1;
+					}
+
+					q.x = ppx + (ux / dp) * m;
+					q.y = ppy + (uy / dp) * m;
+				}
+			}
+
+			result.push(q);
+		}
+
+		return result;
+	};
+
 	/**
 	 * Returns information about the current selection.
 	 */
@@ -5839,12 +6251,12 @@ Graph.prototype.openLink = function(href, target, allowOpener)
 					
 					window.location.hash = hash;
 				}
-				else
+				else if (!Editor.suppressNewWindows)
 				{
 					result = window.open(href, (target != null) ?
 						target : '_blank', (!allowOpener) ?
 						'noopener,noreferrer' : null);
-					
+
 					if (result != null && !allowOpener)
 					{
 						result.opener = null;
@@ -9509,6 +9921,14 @@ Graph.prototype.convertValueToTooltip = function(cell)
  */
 Graph.prototype.getTooltipForCell = function(cell)
 {
+	// Suppress cell tooltips entirely when disabled via the tooltips=0 URL param
+	// (embed/inline/viewer hosts that don't want the link/property hint). Gated
+	// at the content level so it holds regardless of the tooltip handler state.
+	if (window.urlParams != null && urlParams['tooltips'] == '0')
+	{
+		return null;
+	}
+
 	var lockedAncestor = this.getLockedGroupAncestor(cell);
 
 	if (lockedAncestor != null)
@@ -10919,6 +11339,102 @@ Graph.prototype.getTableLines = function(cell, horizontal, vertical)
 	}
 
 	return hl.concat(vl);
+};
+
+/**
+ * Re-strokes the internal table grid lines that run along the edges of the
+ * given table cell or row, on top of the cell's own fill. The grid lines are
+ * drawn once by the parent table shape (see getTableLines), centered on the
+ * cell boundaries and below the child cells in z-order, so a filled cell's
+ * fill paints over its half of those lines: the line looks thin next to an
+ * unfilled neighbour and disappears between two filled cells. The table shape
+ * cannot paint above its own children (in the editor or in any re-rendered
+ * export), so each filled cell repaints the bordering lines here, after its
+ * fill. Which edges carry a line is derived from the cell's row/column index
+ * the same way getTableLines decides, so rowspan/colspan and the rowLines /
+ * columnLines styles stay consistent. No-op for non-table cells.
+ */
+Graph.prototype.paintTableCellLines = function(c, cell, x, y, w, h, stroke, strokeWidth)
+{
+	if (stroke == null || stroke == mxConstants.NONE)
+	{
+		return;
+	}
+
+	var model = this.model;
+	var top = false, bottom = false, left = false, right = false;
+
+	if (this.isTableRow(cell))
+	{
+		var rows = model.getChildCells(model.getParent(cell), true);
+		var index = mxUtils.indexOf(rows, cell);
+		var rowLines = mxUtils.getValue(this.getCurrentCellStyle(
+			model.getParent(cell)), 'rowLines', '1') != '0';
+
+		top = rowLines && index > 0;
+		bottom = rowLines && index < rows.length - 1;
+	}
+	else if (this.isTableCell(cell))
+	{
+		var row = model.getParent(cell);
+		var table = model.getParent(row);
+		var rows = model.getChildCells(table, true);
+		var cols = model.getChildCells(row, true);
+		var style = this.getCurrentCellStyle(table);
+		var rowLines = mxUtils.getValue(style, 'rowLines', '1') != '0';
+		var columnLines = mxUtils.getValue(style, 'columnLines', '1') != '0';
+		var rowIndex = mxUtils.indexOf(rows, row);
+		var colIndex = mxUtils.indexOf(cols, cell);
+
+		top = rowLines && rowIndex > 0;
+		bottom = rowLines && rowIndex < rows.length - 1;
+		left = columnLines && colIndex > 0;
+		right = columnLines && colIndex < cols.length - 1;
+	}
+	else
+	{
+		return;
+	}
+
+	if (top || bottom || left || right)
+	{
+		c.setStrokeColor(stroke);
+		c.setStrokeWidth(strokeWidth);
+		c.setDashed(false);
+		c.setShadow(false);
+
+		if (top)
+		{
+			c.begin();
+			c.moveTo(x, y);
+			c.lineTo(x + w, y);
+			c.stroke();
+		}
+
+		if (bottom)
+		{
+			c.begin();
+			c.moveTo(x, y + h);
+			c.lineTo(x + w, y + h);
+			c.stroke();
+		}
+
+		if (left)
+		{
+			c.begin();
+			c.moveTo(x, y);
+			c.lineTo(x, y + h);
+			c.stroke();
+		}
+
+		if (right)
+		{
+			c.begin();
+			c.moveTo(x + w, y);
+			c.lineTo(x + w, y + h);
+			c.stroke();
+		}
+	}
 };
 
 /**
@@ -13858,6 +14374,292 @@ if (typeof mxVertexHandler !== 'undefined')
 		};
 
 		/**
+		 * Overrides resetEdge to also clear innerLoopWaypoints style.
+		 */
+		var graphResetEdge = Graph.prototype.resetEdge;
+
+		Graph.prototype.resetEdge = function(edge)
+		{
+			if (edge != null)
+			{
+				this.setCellStyles('innerLoopWaypoints', null, [edge]);
+			}
+
+			return graphResetEdge.apply(this, arguments);
+		};
+
+		/**
+		 * Uses the segment handler for self-loops so they always get one handle
+		 * per segment (outgoing, middle/distance and incoming). This works even
+		 * for legacy loops that are still routed via mxEdgeStyle.Loop (no stored
+		 * waypoints), because the segment handler derives its handles from the
+		 * absolute points. Dragging a segment handle converts the loop to an
+		 * orthogonal routing with inner waypoints so it keeps its 3-segment
+		 * shape; existing loops are not modified until edited.
+		 */
+		var graphCreateEdgeHandler = Graph.prototype.createEdgeHandler;
+
+		Graph.prototype.createEdgeHandler = function(state, edgeStyle)
+		{
+			if (state != null)
+			{
+				var source = state.getVisibleTerminalState(true);
+				var target = state.getVisibleTerminalState(false);
+
+				if (source != null && source == target)
+				{
+					var handler = this.createEdgeSegmentHandler(state);
+					var changePoints = handler.changePoints;
+					var getPreviewPoints = handler.getPreviewPoints;
+					var updatePreviewState = handler.updatePreviewState;
+					var clonePreviewState = handler.clonePreviewState;
+
+					// Keeps the dragged handle under the mouse and the loop the
+					// simplest two-corner loop so a segment drag (e.g. across the
+					// shape) cannot collapse it into a zero-size spike
+					handler.getPreviewPoints = function(point)
+					{
+						if (!this.isSource && !this.isTarget)
+						{
+							// The dashed preview is routed with the same style that
+							// changePoints commits (orthogonalEdgeStyle + inner
+							// waypoints) so it matches the final result and dragging a
+							// segment past the shape adds new segments instead of
+							// collapsing the loop. That style is applied to the preview
+							// clone in clonePreviewState below, NOT to the live edge
+							// state, so an aborted (Escape) drag cannot leave a legacy
+							// loop's cached style dirty. The segment dragging itself is
+							// the standard orthogonal behaviour (each segment moves on
+							// one axis, new segments are added as needed).
+
+							// The middle handle of a simple loop (3 segments => 4 current
+							// points) moves the whole loop around the shape; the arms
+							// use the standard per-axis segment dragging. Works even
+							// before any waypoint is committed (the loop is still
+							// routed by the default Loop style with faded handles).
+							var cur = this.getCurrentPoints();
+
+							if (cur != null && cur.length == 4 &&
+								this.index > 1 && this.index < cur.length - 1)
+							{
+								var loop = this.graph.getLoopAroundPoints(this.state, point);
+
+								if (loop != null)
+								{
+									return this.graph.keepLoopOutsideShape(this.state, loop);
+								}
+							}
+
+							// Keeps the loop outside the shape so the terminals stay
+							// on the perimeter (lower edge) instead of collapsing to
+							// the shape center when a segment is dragged inside
+							return this.graph.keepLoopOutsideShape(this.state,
+								getPreviewPoints.apply(this, arguments));
+						}
+
+						return getPreviewPoints.apply(this, arguments);
+					};
+
+					// Routes the dashed preview orthogonally with inner waypoints by
+					// applying the converted style to the throwaway preview clone
+					// (created per mouse-move) rather than mutating the live edge
+					// state. This keeps the preview matching the committed result
+					// while leaving the real loop's cached style untouched if the drag
+					// is aborted (mxEdgeHandler.mouseMove clones before routing it).
+					handler.clonePreviewState = function(point, terminal)
+					{
+						var clone = clonePreviewState.apply(this, arguments);
+
+						if (!this.isSource && !this.isTarget &&
+							clone != null && clone.style != null)
+						{
+							clone.style[mxConstants.STYLE_EDGE] = 'orthogonalEdgeStyle';
+							clone.style['innerLoopWaypoints'] = '1';
+						}
+
+						return clone;
+					};
+
+					handler.changePoints = function(edge, points, clone)
+					{
+						points = this.graph.keepLoopOutsideShape(this.state, points);
+
+						var model = this.graph.getModel();
+
+						model.beginUpdate();
+						try
+						{
+							edge = changePoints.call(this, edge, points, clone);
+
+							// Persists the orthogonal routing and keeps the inner
+							// waypoints so the converted loop retains its shape
+							if (edge != null && points != null && points.length >= 2)
+							{
+								this.graph.setCellStyles(mxConstants.STYLE_EDGE,
+									'orthogonalEdgeStyle', [edge]);
+								this.graph.setCellStyles('innerLoopWaypoints', '1', [edge]);
+							}
+						}
+						finally
+						{
+							model.endUpdate();
+						}
+
+						return edge;
+					};
+
+					// Resets the last-known-good loop at the start of each drag so the
+					// spike fallback can revert to the loop's pre-drag shape.
+					var handlerStart = handler.start;
+
+					handler.start = function(x, y, index)
+					{
+						this.validLoopPoints = null;
+						handlerStart.apply(this, arguments);
+					};
+
+					// Re-routes the preview clone from this.points (used after a
+					// fallback replaces them).
+					handler.rerouteLoopPreview = function(edge)
+					{
+						var source = this.state.getVisibleTerminalState(true);
+						var target = this.state.getVisibleTerminalState(false);
+
+						edge.view.updateFixedTerminalPoints(edge, source, target);
+						edge.view.updatePoints(edge, this.points, source, target);
+						edge.view.updateFloatingTerminalPoints(edge, source, target);
+					};
+
+					// The current committed loop's inner waypoints in model space (from
+					// the stored points, or derived from the routed loop), used as the
+					// fallback when a drag would otherwise spike.
+					handler.getCommittedLoopPoints = function()
+					{
+						var geo = this.graph.getCellGeometry(this.state.cell);
+
+						if (geo != null && geo.points != null && geo.points.length >= 2)
+						{
+							return geo.points.map(function(p)
+							{
+								return new mxPoint(p.x, p.y);
+							});
+						}
+
+						var pts = this.state.absolutePoints;
+
+						if (pts != null && pts.length >= 4)
+						{
+							var s = this.state.view.scale;
+							var tr = this.state.view.translate;
+							var o = this.state.origin;
+							var res = [];
+
+							for (var i = 1; i < pts.length - 1; i++)
+							{
+								if (pts[i] != null)
+								{
+									res.push(new mxPoint(pts[i].x / s - tr.x - o.x,
+										pts[i].y / s - tr.y - o.y));
+								}
+							}
+
+							if (res.length >= 2)
+							{
+								return res;
+							}
+						}
+
+						return null;
+					};
+
+					// True when the routed loop's two terminal points have collapsed
+					// onto (nearly) the same perimeter point.
+					handler.isLoopSpike = function(edge)
+					{
+						var pts = edge.absolutePoints;
+
+						if (pts == null || pts.length < 2 || pts[0] == null ||
+							pts[pts.length - 1] == null)
+						{
+							return true;
+						}
+
+						var thr = this.graph.gridSize * this.state.view.scale / 2;
+
+						return Math.abs(pts[0].x - pts[pts.length - 1].x) < thr &&
+							Math.abs(pts[0].y - pts[pts.length - 1].y) < thr;
+					};
+
+					// The inherited segment handler has a "this is really a straight
+					// line" special case that replaces the whole edge with two
+					// identical points at the cursor when the merged preview is empty
+					// and the two terminals share an axis. A self-loop is never a
+					// straight line, but its source and target always share an axis
+					// (and for a fixed-anchor perimeter, e.g. a lifeline spine, the
+					// same x), so dragging an arm handle far enough to flatten the
+					// loop trips that case and collapses it to a single point. Rebuild
+					// a valid minimum-size loop under the cursor instead of letting it
+					// collapse (the middle handle already avoids this via
+					// getLoopAroundPoints; this covers the arm handles).
+					handler.updatePreviewState = function(edge, point, terminalState, me, outline)
+					{
+						if (!this.isSource && !this.isTarget && this.validLoopPoints == null)
+						{
+							this.validLoopPoints = this.getCommittedLoopPoints();
+						}
+
+						updatePreviewState.apply(this, arguments);
+
+						if (!this.isSource && !this.isTarget)
+						{
+							if (this.points != null && this.points.length == 2 &&
+								Math.round(this.points[0].x - this.points[1].x) == 0 &&
+								Math.round(this.points[0].y - this.points[1].y) == 0)
+							{
+								var loop = this.graph.getLoopAroundPoints(this.state, point);
+
+								if (loop != null)
+								{
+									this.points = this.graph.keepLoopOutsideShape(this.state, loop);
+									this.rerouteLoopPreview(edge);
+								}
+							}
+
+							// Post-route spike guard: placement guesses the terminal with
+							// a perimeter probe, but the router (getFloatingTerminalPoint)
+							// can still collapse both arms onto one point on a slanted or
+							// concave edge. Detect that from the actually-routed terminals
+							// and fall back to the last valid loop, so the handle stops at
+							// the edge of the valid region instead of spiking.
+							if (this.isLoopSpike(edge))
+							{
+								if (this.validLoopPoints != null)
+								{
+									this.points = this.validLoopPoints.map(function(p)
+									{
+										return new mxPoint(p.x, p.y);
+									});
+									this.rerouteLoopPreview(edge);
+								}
+							}
+							else if (this.points != null && this.points.length >= 2)
+							{
+								this.validLoopPoints = this.points.map(function(p)
+								{
+									return new mxPoint(p.x, p.y);
+								});
+							}
+						}
+					};
+
+					return handler;
+				}
+			}
+
+			return graphCreateEdgeHandler.apply(this, arguments);
+		};
+
+		/**
 		 * Disables drill-down for non-swimlanes.
 		 */
 		Graph.prototype.isValidRoot = function(cell)
@@ -14247,6 +15049,55 @@ if (typeof mxVertexHandler !== 'undefined')
 		};
 
 		/**
+		 * Rotates the given cell and its non-relative children by the given angle
+		 * (in degrees) about the cell's center, baking the rotation into the child
+		 * geometries so a group rotates as a rigid body. This mirrors the algorithm
+		 * mxVertexHandler.rotateCell uses for the rotation handle, exposed on the
+		 * graph so the angle field, single-click rotate and the 90 degree turn can
+		 * produce the same result for groups. The angle is a signed delta.
+		 */
+		Graph.prototype.rotateCell = function(cell, angle, parent)
+		{
+			if (angle != 0)
+			{
+				var model = this.getModel();
+
+				if (model.isVertex(cell) || model.isEdge(cell))
+				{
+					if (!model.isEdge(cell))
+					{
+						var total = (this.getCurrentCellStyle(cell)[mxConstants.STYLE_ROTATION] || 0) + angle;
+						this.setCellStyles(mxConstants.STYLE_ROTATION, total, [cell]);
+					}
+
+					var geo = this.getCellGeometry(cell);
+
+					if (geo != null)
+					{
+						var pgeo = this.getCellGeometry(parent);
+
+						if (pgeo != null && !model.isEdge(parent))
+						{
+							geo = geo.clone();
+							geo.rotate(angle, new mxPoint(pgeo.width / 2, pgeo.height / 2));
+							model.setGeometry(cell, geo);
+						}
+
+						if ((model.isVertex(cell) && !geo.relative) || model.isEdge(cell))
+						{
+							var childCount = model.getChildCount(cell);
+
+							for (var i = 0; i < childCount; i++)
+							{
+								this.rotateCell(model.getChildAt(cell, i), angle, cell);
+							}
+						}
+					}
+				}
+			}
+		};
+
+		/**
 		 * Turns the given cells and returns the changed cells.
 		 */
 		Graph.prototype.turnShapes = function(cells, backwards)
@@ -14265,7 +15116,51 @@ if (typeof mxVertexHandler !== 'undefined')
 					{
 						var src = model.getTerminal(cell, true);
 						var trg = model.getTerminal(cell, false);
-						
+
+						// A self-loop routed by the direction-based loop style has no
+						// stored waypoints or fixed connection points to reverse. To
+						// invert it, materialize its current routing as inner loop
+						// waypoints (keeping its position and matching the loop handle's
+						// orthogonal form); the waypoint reversal below then flips the
+						// loop direction. Already-edited loops keep their waypoints.
+						if (src != null && src == trg)
+						{
+							var loopState = this.view.getState(cell);
+							var loopGeo = model.getGeometry(cell);
+
+							if (loopState != null && loopGeo != null &&
+								loopState.absolutePoints != null &&
+								loopState.absolutePoints.length >= 4 &&
+								(loopGeo.points == null || loopGeo.points.length < 2) &&
+								loopState.style[mxConstants.STYLE_EXIT_X] == null &&
+								loopState.style[mxConstants.STYLE_ENTRY_X] == null)
+							{
+								var lscale = this.view.scale;
+								var ltrans = this.view.translate;
+								var lorigin = loopState.origin;
+								var abs = loopState.absolutePoints;
+								var wp = [];
+
+								for (var j = 1; j < abs.length - 1; j++)
+								{
+									if (abs[j] != null)
+									{
+										wp.push(new mxPoint(abs[j].x / lscale - ltrans.x - lorigin.x,
+											abs[j].y / lscale - ltrans.y - lorigin.y));
+									}
+								}
+
+								if (wp.length >= 2)
+								{
+									loopGeo = loopGeo.clone();
+									loopGeo.points = wp;
+									model.setGeometry(cell, loopGeo);
+									this.setCellStyles(mxConstants.STYLE_EDGE, 'orthogonalEdgeStyle', [cell]);
+									this.setCellStyles('innerLoopWaypoints', '1', [cell]);
+								}
+							}
+						}
+
 						model.setTerminal(cell, trg, true);
 						model.setTerminal(cell, src, false);
 						
@@ -14312,6 +15207,17 @@ if (typeof mxVertexHandler !== 'undefined')
 					}
 					else if (model.isVertex(cell))
 					{
+						// Groups rotate as a rigid body (children baked) like the rotation
+						// handle, instead of the leaf-shape size/direction swap below
+						if (model.getChildCount(cell) > 0 && !this.isTable(cell) &&
+							!this.isTableRow(cell) && !this.isTableCell(cell) && !this.isSwimlane(cell))
+						{
+							this.rotateCell(cell, (backwards) ? -90 : 90);
+							select.push(cell);
+
+							continue;
+						}
+
 						var geo = this.getCellGeometry(cell);
 			
 						if (geo != null)
@@ -21030,8 +21936,20 @@ if (typeof mxVertexHandler !== 'undefined')
 			if (this.state.view.graph.model.isVertex(this.state.cell) &&
 				stroke == mxConstants.NONE && fill == mxConstants.NONE)
 			{
-				var angle = mxUtils.mod(mxUtils.getValue(this.state.style, mxConstants.STYLE_ROTATION, 0) + 90, 360);
-				this.state.view.graph.setCellStyles(mxConstants.STYLE_ROTATION, angle, [this.state.cell]);
+				var graph = this.state.view.graph;
+
+				// Groups rotate as a rigid body (children baked) like the rotation handle
+				if (graph.model.getChildCount(this.state.cell) > 0 && !graph.isTable(this.state.cell) &&
+					!graph.isTableRow(this.state.cell) && !graph.isTableCell(this.state.cell) &&
+					!graph.isSwimlane(this.state.cell))
+				{
+					graph.rotateCell(this.state.cell, 90);
+				}
+				else
+				{
+					var angle = mxUtils.mod(mxUtils.getValue(this.state.style, mxConstants.STYLE_ROTATION, 0) + 90, 360);
+					graph.setCellStyles(mxConstants.STYLE_ROTATION, angle, [this.state.cell]);
+				}
 			}
 			else
 			{

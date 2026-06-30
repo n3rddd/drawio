@@ -442,6 +442,7 @@ importFrom=Importeren van
 includeCopyOfMyDiagram=Een kopie van mijn diagram toevoegen
 increaseIndent=Inspringing vergroten
 decreaseIndent=Inspringing verkleinen
+inherit=Overnemen
 initialView=Startweergave
 insert=Invoegen
 insertColumnBefore=Kolom links invoegen

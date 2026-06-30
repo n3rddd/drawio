@@ -83,7 +83,7 @@ mxElbowEdgeHandler.prototype.createBends = function()
 
 /**
  * Function: createVirtualBends
- * 
+ *
  * Returns null.
  */
 mxElbowEdgeHandler.prototype.createVirtualBends = function()

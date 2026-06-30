@@ -547,7 +547,37 @@ BaseFormatPanel.prototype.installInputHandler = function(input, key, defaultValu
 				try
 				{
 					var cells = ui.getSelectionState().cells;
-					graph.setCellStyles(key, value, cells);
+
+					// Rotating a group must rotate its children as a rigid body (like the
+					// rotation handle) instead of only spinning the group's own shape
+					if (key == mxConstants.STYLE_ROTATION)
+					{
+						var plain = [];
+
+						for (var i = 0; i < cells.length; i++)
+						{
+							if (graph.model.isVertex(cells[i]) && graph.model.getChildCount(cells[i]) > 0 &&
+								!graph.isTable(cells[i]) && !graph.isTableRow(cells[i]) &&
+								!graph.isTableCell(cells[i]) && !graph.isSwimlane(cells[i]))
+							{
+								var cur = parseFloat(graph.getCurrentCellStyle(cells[i])[mxConstants.STYLE_ROTATION]) || 0;
+								graph.rotateCell(cells[i], value - cur);
+							}
+							else
+							{
+								plain.push(cells[i]);
+							}
+						}
+
+						if (plain.length > 0)
+						{
+							graph.setCellStyles(key, value, plain);
+						}
+					}
+					else
+					{
+						graph.setCellStyles(key, value, cells);
+					}
 
 					// Handles special case for fontSize where HTML labels are parsed and updated
 					if (key == mxConstants.STYLE_FONTSIZE)
@@ -1031,8 +1061,17 @@ BaseFormatPanel.prototype.createCellOption = function(label, key, defaultValue, 
  * Adds the given color option.
  */
 BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setColorFn, defaultColor,
-	listener, callbackFn, hideCheckbox, defaultColorValue, singleColorMode, isDarkModeFn, title)
+	listener, callbackFn, hideCheckbox, defaultColorValue, singleColorMode, isDarkModeFn, title, inheritInfo)
 {
+	// Resolves the color an 'inherit' value currently renders as, for previewing
+	// in the swatch and seeding the picker. Falls back to the default color.
+	function getInheritedColorValue()
+	{
+		var col = (inheritInfo != null && inheritInfo.getColor != null) ?
+			inheritInfo.getColor() : null;
+
+		return (col != null && col != 'inherit') ? col : defaultColorValue;
+	};
 	var darkModeOverridden = isDarkModeFn != null;
 	isDarkModeFn = (isDarkModeFn != null) ? isDarkModeFn : Editor.isDarkMode;
 
@@ -1125,8 +1164,11 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 			}
 
 			value = getColorFn();
+			// Previews the resolved color for an inherited value in the swatch
+			var swatchValue = (value == 'inherit' && inheritInfo != null) ?
+				getInheritedColorValue() : value;
 			var cssColor = mxUtils.getLightDarkColor(
-				(value != 'default') ? value :
+				(swatchValue != 'default') ? swatchValue :
 					defaultColorValue);
 
 			var div = document.createElement('div');
@@ -1139,7 +1181,7 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 			btn.innerText = '';
 			btn.appendChild(div);
 			
-			if (!singleColorMode && mxUtils.isLightDarkColor(value) &&
+			if (!singleColorMode && mxUtils.isLightDarkColor(swatchValue) &&
 				cssColor.light != cssColor.dark)
 			{
 				div.style.background = 'linear-gradient(to right bottom, ' +
@@ -1187,7 +1229,11 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 				}
 			}
 
-			if (graph.isSpecialColor(value))
+			// 'inherit' is the no-own-color state (eg. a table cell using its
+			// table's line/fill color), not a contextual reference like the
+			// other special colors. Keep the checkbox visible but unchecked so
+			// the color can be re-enabled, instead of hiding it.
+			if (graph.isSpecialColor(value) && value != 'inherit')
 			{
 				cb.style.display = 'none';
 			}
@@ -1195,7 +1241,7 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 			{
 				cb.style.display = '';
 
-				if (value != null && value != mxConstants.NONE)
+				if (value != null && value != mxConstants.NONE && value != 'inherit')
 				{
 					cb.setAttribute('checked', 'checked');
 					cb.defaultChecked = true;
@@ -1209,7 +1255,8 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 				}
 			}
 	
-			btn.style.display = (cb.checked || hideCheckbox) ? '' : 'none';
+			btn.style.display = (cb.checked || hideCheckbox ||
+				(value == 'inherit' && inheritInfo != null)) ? '' : 'none';
 			applying = false;
 		}
 	};
@@ -1251,7 +1298,12 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 			actualDefaultValue = mxUtils.getLightDarkColor(defaultColorValue).dark;
 		}
 
-		this.editorUi.pickColor(getActualColorValue(value, true), function(newColor)
+		// Seeds the picker with the resolved color for an inherited value so it
+		// shows the inherited color rather than the literal 'inherit' token.
+		var pickerColor = (value == 'inherit' && inheritInfo != null) ?
+			getInheritedColorValue() : getActualColorValue(value, true);
+
+		this.editorUi.pickColor(pickerColor, function(newColor)
 		{
 			apply(newColor);
 		}, (defaultColor == 'default') ? 'default' : null,
@@ -1262,16 +1314,19 @@ BaseFormatPanel.prototype.createColorOption = function(label, getColorFn, setCol
 			// "none" instead of keeping the previous selection's color, e.g.
 			// switching to a shape with no gradient or one that has no fill.
 			// ColorWindow.refreshColor ignores null, so null would be stale.
-			var refreshValue = getActualColorValue(getColorFn(), true);
+			var current = getColorFn();
+			var refreshValue = (current == 'inherit' && inheritInfo != null) ?
+				getInheritedColorValue() : getActualColorValue(current, true);
 
 			return (refreshValue != null) ? refreshValue : mxConstants.NONE;
-		});
+		}, (inheritInfo != null) ? inheritInfo.allow : null);
 
 		mxEvent.consume(evt);
 	}));
 	
 	btn.className = 'geColorBtn';
-	btn.style.display = (cb.checked || hideCheckbox) ? '' : 'none';
+	btn.style.display = (cb.checked || hideCheckbox ||
+		(value == 'inherit' && inheritInfo != null)) ? '' : 'none';
 	div.appendChild(btn);
 
 	var clr = (value != null && typeof value === 'string' &&value.charAt(0) == '#') ?
@@ -1447,6 +1502,40 @@ BaseFormatPanel.prototype.createCellColorOption = function(label, colorKey, defa
 
 	var value = getValue();
 
+	// Drives the "Inherit" affordance for colorKey. allow() reports whether the
+	// current selection can inherit (it lives inside another shape such as a
+	// table, swimlane or container); getColor() resolves the color it currently
+	// inherits, for the swatch preview. Both read the live selection so the
+	// reused (non-modal) color window tracks selection changes while open.
+	var inheritInfo = {
+		allow: function()
+		{
+			var cell = graph.getSelectionCell();
+			var parent = (cell != null) ? graph.getModel().getParent(cell) : null;
+
+			return parent != null && graph.getModel().isVertex(parent);
+		},
+		getColor: function()
+		{
+			var curr = graph.getModel().getParent(graph.getSelectionCell());
+
+			while (curr != null && graph.getModel().isVertex(curr))
+			{
+				var style = graph.getCellStyle(curr, false);
+				var col = (style != null) ? style[colorKey] : null;
+
+				if (col != null && col != 'inherit')
+				{
+					return col;
+				}
+
+				curr = graph.getModel().getParent(curr);
+			}
+
+			return null;
+		}
+	};
+
 	if (value != null && allowArrays && mxUtils.parseColorList(value).length > 1)
 	{
 		return this.createArrayCellColorOption(label, colorKey, defaultColor,
@@ -1495,7 +1584,7 @@ BaseFormatPanel.prototype.createCellColorOption = function(label, colorKey, defa
 			{
 				graph.getModel().removeListener(this.listener);
 			}
-		}, callbackFn, null, defaultColorValue, null, null, title);
+		}, callbackFn, null, defaultColorValue, null, null, title, inheritInfo);
 	}
 };
 
@@ -1793,7 +1882,10 @@ ArrangePanel.prototype.init = function()
 					mxResources.get('lineend');
 			}
 
-			if (title.length > 0)
+			// Only when the edge is selected on its own: with a shape also
+			// selected the line start/end inputs are blanked (see addEdgeGeometry),
+			// which would leave just an empty section title
+			if (title.length > 0 && ss.cells.length == 1)
 			{
 				var edgeGeoSec = this.createCollapsibleSection(title, false);
 				edgeGeoSec.contentDiv.style.paddingBottom = '10px';
@@ -1802,11 +1894,44 @@ ArrangePanel.prototype.init = function()
 			}
 		}
 
+		// Direction of an edge: which side a self-loop sits on (dropdown) plus the
+		// reverse/turn button that inverts the edge direction
+		if (ss.vertices.length == 0 && ss.edges.length > 0 && !ss.containsLabel)
+		{
+			var dirSec = this.createCollapsibleSection(mxResources.get('direction'), false);
+			var dirPanel = this.createPanel();
+
+			// Reverse/turn button on top, then the loop direction dropdown
+			this.addEdgeTurn(dirPanel);
+
+			if (ss.edges.length == 1)
+			{
+				var loopEdge = ss.edges[0];
+				var loopModel = this.editorUi.editor.graph.model;
+
+				if (loopModel.getTerminal(loopEdge, true) != null &&
+					loopModel.getTerminal(loopEdge, true) == loopModel.getTerminal(loopEdge, false))
+				{
+					this.addLoopDirection(dirPanel);
+				}
+			}
+
+			dirSec.contentDiv.appendChild(dirPanel);
+			this.container.appendChild(dirSec.wrapper);
+		}
+
+		// Rotation (vertices); the edge reverse/turn lives in the direction section
+		// above, so this is hidden when addAngle would leave it empty
 		if (!ss.containsLabel || ss.edges.length == 0)
 		{
 			var angleSec = this.createCollapsibleSection(mxResources.get('rotation'), true);
-			angleSec.contentDiv.appendChild(this.addAngle(this.createPanel()));
-			this.container.appendChild(angleSec.wrapper);
+			var anglePanel = this.addAngle(this.createPanel());
+			angleSec.contentDiv.appendChild(anglePanel);
+
+			if (anglePanel.childNodes.length > 0)
+			{
+				this.container.appendChild(angleSec.wrapper);
+			}
 		}
 
 		if (!ss.containsLabel)
@@ -2212,11 +2337,223 @@ ArrangePanel.prototype.addFlip = function(div)
 	{
 		graph.flipCells(ss.cells, false);
 	})
-	
+
 	btn.setAttribute('title', mxResources.get('vertical'));
 	btn.style.width = '104px';
 	div.appendChild(btn);
-	
+
+	return div;
+};
+
+/**
+ * Adds a direction selector for self-loops, choosing which side of the vertex
+ * the loop sits on. It drives the loop geometry directly - re-routing the loop
+ * to the chosen side via getLoopAroundPoints - rather than STYLE_DIRECTION,
+ * which is ignored once a loop carries inner waypoints; the displayed value is
+ * read back from the loop's actual position. For fixed-anchor shapes (lifeline
+ * spine / horizontal backbone) only the two sides perpendicular to the line are
+ * offered, since the others are not meaningful there.
+ */
+ArrangePanel.prototype.addLoopDirection = function(div)
+{
+	var ui = this.editorUi;
+	var graph = ui.editor.graph;
+	var ss = ui.getSelectionState();
+	var edge = ss.edges[0];
+	var state = graph.view.getState(edge);
+
+	if (state == null)
+	{
+		return div;
+	}
+
+	var select = document.createElement('select');
+	select.className = 'geFullWidthElement';
+	select.style.boxSizing = 'border-box';
+	// Overrides the absolute positioning of .geFormatSection select so the
+	// dropdown keeps flow height and the next section divider is pushed down
+	select.style.position = 'relative';
+	select.setAttribute('title', mxResources.get('direction'));
+
+	// A fixed-anchor perimeter only supports the two sides perpendicular to its
+	// line (vertical spine -> east/west, horizontal backbone -> north/south)
+	var axis = graph.getLoopFixedAxis(state);
+	var dirs = (axis == 'x') ? [mxConstants.DIRECTION_EAST, mxConstants.DIRECTION_WEST] :
+		(axis == 'y') ? [mxConstants.DIRECTION_NORTH, mxConstants.DIRECTION_SOUTH] :
+		[mxConstants.DIRECTION_NORTH, mxConstants.DIRECTION_EAST,
+			mxConstants.DIRECTION_SOUTH, mxConstants.DIRECTION_WEST];
+
+	for (var i = 0; i < dirs.length; i++)
+	{
+		var option = document.createElement('option');
+		option.setAttribute('value', dirs[i]);
+		mxUtils.write(option, mxResources.get(dirs[i]));
+		select.appendChild(option);
+	}
+
+	// Reads the current side back from the loop's actual geometry so the value
+	// matches the visible position (STYLE_DIRECTION is dead/inverted for the
+	// inner-waypoint loops this control routes)
+	var cur = this.getLoopDirection(state);
+	select.value = (mxUtils.indexOf(dirs, cur) >= 0) ? cur : dirs[0];
+
+	mxEvent.addListener(select, 'change', mxUtils.bind(this, function()
+	{
+		this.setLoopDirection(edge, select.value);
+		ui.fireEvent(new mxEventObject('styleChanged', 'keys', [mxConstants.STYLE_DIRECTION],
+			'values', [select.value], 'cells', ss.cells));
+	}));
+
+	// Drops the dropdown onto its own line below the button, matching the
+	// spacing between the two edge buttons (white-space: nowrap needs the break)
+	if (div.firstChild != null)
+	{
+		mxUtils.br(div);
+		select.style.marginTop = '2px';
+	}
+
+	div.appendChild(select);
+
+	return div;
+};
+
+/**
+ * Returns the side a self-loop currently sits on (a mxConstants.DIRECTION_*),
+ * derived from the loop body's position relative to the source centre, or null.
+ */
+ArrangePanel.prototype.getLoopDirection = function(state)
+{
+	var source = (state != null) ? state.getVisibleTerminalState(true) : null;
+	var pts = (state != null) ? state.absolutePoints : null;
+
+	if (source == null || pts == null || pts.length < 3)
+	{
+		return null;
+	}
+
+	// Mean of the inner (non-terminal) points = the loop body's far side
+	var mx = 0, my = 0, n = 0;
+
+	for (var i = 1; i < pts.length - 1; i++)
+	{
+		if (pts[i] != null)
+		{
+			mx += pts[i].x;
+			my += pts[i].y;
+			n++;
+		}
+	}
+
+	if (n == 0)
+	{
+		return null;
+	}
+
+	var dx = (mx / n) - source.getCenterX();
+	var dy = (my / n) - source.getCenterY();
+
+	return (Math.abs(dx) >= Math.abs(dy)) ?
+		((dx >= 0) ? mxConstants.DIRECTION_EAST : mxConstants.DIRECTION_WEST) :
+		((dy >= 0) ? mxConstants.DIRECTION_SOUTH : mxConstants.DIRECTION_NORTH);
+};
+
+/**
+ * Re-routes the given self-loop so it sits on the chosen side, by feeding a
+ * point just outside that side to the perimeter-aware getLoopAroundPoints and
+ * committing the result as inner waypoints.
+ */
+ArrangePanel.prototype.setLoopDirection = function(edge, dir)
+{
+	var graph = this.editorUi.editor.graph;
+	var state = graph.view.getState(edge);
+	var source = (state != null) ? state.getVisibleTerminalState(true) : null;
+
+	if (source == null)
+	{
+		return;
+	}
+
+	// A point just outside the chosen side (in scaled coordinates) drives the
+	// perimeter-aware loop placement
+	var off = 2 * graph.gridSize * graph.view.scale;
+	var cx = source.getCenterX();
+	var cy = source.getCenterY();
+	var p = (dir == mxConstants.DIRECTION_EAST) ? new mxPoint(source.x + source.width + off, cy) :
+		(dir == mxConstants.DIRECTION_WEST) ? new mxPoint(source.x - off, cy) :
+		(dir == mxConstants.DIRECTION_NORTH) ? new mxPoint(cx, source.y - off) :
+		new mxPoint(cx, source.y + source.height + off);
+
+	var loop = graph.getLoopAroundPoints(state, p);
+
+	if (loop != null)
+	{
+		loop = graph.keepLoopOutsideShape(state, loop);
+
+		graph.getModel().beginUpdate();
+		try
+		{
+			var geo = graph.getCellGeometry(edge);
+
+			if (geo != null)
+			{
+				geo = geo.clone();
+				geo.points = loop;
+				graph.getModel().setGeometry(edge, geo);
+			}
+
+			graph.setCellStyles(mxConstants.STYLE_EDGE, 'orthogonalEdgeStyle', [edge]);
+			graph.setCellStyles('innerLoopWaypoints', '1', [edge]);
+		}
+		finally
+		{
+			graph.getModel().endUpdate();
+		}
+	}
+};
+
+/**
+ * Adds the reverse/turn button for an edge selection (and a rotate-by-90
+ * button for fully unconnected edges, issue #5076).
+ */
+ArrangePanel.prototype.addEdgeTurn = function(div)
+{
+	var ui = this.editorUi;
+	var ss = ui.getSelectionState();
+	var turnAction = ui.actions.get('turn');
+
+	var btn = mxUtils.button(mxResources.get('reverse'), function(evt)
+	{
+		turnAction.funct(evt);
+	});
+	btn.setAttribute('title', mxResources.get('reverse') +
+		((turnAction.shortcut != null) ? ' (' + turnAction.shortcut + ')' : ''));
+	btn.className = 'geFullWidthElement';
+
+	// Each control sits on its own line (the section uses white-space: nowrap,
+	// so inline elements would otherwise sit side by side and overflow off-panel)
+	if (div.firstChild != null)
+	{
+		mxUtils.br(div);
+		btn.style.marginTop = '2px';
+	}
+
+	div.appendChild(btn);
+
+	// Separate rotate-by-90 button for fully unconnected edges (issue #5076)
+	if (!ss.connectedEdges)
+	{
+		mxUtils.br(div);
+
+		var rotateBtn = mxUtils.button(mxResources.get('turn'), function(evt)
+		{
+			ui.actions.get('rotateEdge').funct(evt);
+		});
+		rotateBtn.setAttribute('title', mxResources.get('turn'));
+		rotateBtn.className = 'geFullWidthElement';
+		rotateBtn.style.marginTop = '2px';
+		div.appendChild(rotateBtn);
+	}
+
 	return div;
 };
 
@@ -2313,47 +2650,26 @@ ArrangePanel.prototype.addAngle = function(div)
 		mxUtils.br(div);
 	}
 
-	if (!ss.containsLabel)
+	// The edge reverse/turn button is rendered in the direction section
+	// (addEdgeTurn); here it is only for selections that include a vertex.
+	if (!ss.containsLabel && ss.vertices.length > 0)
 	{
-		var label = mxResources.get('reverse');
-		
-		if (ss.vertices.length > 0 && ss.edges.length > 0)
-		{
-			label = mxResources.get('turn') + ' / ' + label;
-		}
-		else if (ss.vertices.length > 0)
-		{
-			label = mxResources.get('turn');
-		}
+		var label = (ss.edges.length > 0) ?
+			mxResources.get('turn') + ' / ' + mxResources.get('reverse') :
+			mxResources.get('turn');
 
 		btn = mxUtils.button(label, function(evt)
 		{
 			ui.actions.get('turn').funct(evt);
 		})
-		
+
 		btn.setAttribute('title', label + ' (' + this.editorUi.actions.get('turn').shortcut + ')');
 		btn.className = 'geFullWidthElement';
 		div.appendChild(btn);
-		
+
 		if (input != null)
 		{
 			btn.style.marginTop = '10px';
-		}
-
-		// Adds a separate rotate-by-90 button for fully unconnected edges (issue #5076)
-		if (ss.vertices.length == 0 && ss.edges.length > 0 && !ss.connectedEdges)
-		{
-			mxUtils.br(div);
-
-			var rotateBtn = mxUtils.button(mxResources.get('turn'), function(evt)
-			{
-				ui.actions.get('rotateEdge').funct(evt);
-			});
-
-			rotateBtn.setAttribute('title', mxResources.get('turn'));
-			rotateBtn.className = 'geFullWidthElement';
-			rotateBtn.style.marginTop = '2px';
-			div.appendChild(rotateBtn);
 		}
 	}
 	
@@ -4225,7 +4541,7 @@ TextFormatPanel.prototype.addFont = function(container)
 	{
 		convertToSvg.getElementsByTagName('span')[0].style.maxWidth = '172px';
 		convertToSvg.appendChild(ui.menus.createHelpLink(
-			'https://github.com/jgraph/drawio/discussions/5165'));
+			'https://www.drawio.com/docs/manual/text/svg-labels/'));
 	}
 
 	var spacingPanel = this.createPanel();

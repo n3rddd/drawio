@@ -443,6 +443,7 @@ importFrom=ከ...አስገባ
 includeCopyOfMyDiagram=የእኔን ዳያግራም ቅጂ ያካትቱ
 increaseIndent=ገደብ ጨምር
 decreaseIndent=ገደብ ቀንስ
+inherit=ውረስ
 initialView=የመጀመሪያ እይታ
 insert=አስገባ
 insertColumnBefore=ዓምድ በግራ አስገባ

@@ -49,8 +49,10 @@ var ElkLayoutBindings = elkLayoutLoaded ? ElkLayout : {};
  * @param {EditorUi} editorUi
  * @param {string} algorithm - 'layered', 'mrtree', 'force', 'radial'
  * @param {Object} [options] - Additional ELK layout options
+ * @param {Object} [runOptions] - Bridge run options (e.g. edge routing)
+ * @param {Function} [done] - Optional callback invoked after the layout is applied
  */
-ElkLayoutBindings.run = function(editorUi, algorithm, options, runOptions)
+ElkLayoutBindings.run = function(editorUi, algorithm, options, runOptions, done)
 {
 	var graph = editorUi.editor.graph;
 
@@ -90,7 +92,7 @@ ElkLayoutBindings.run = function(editorUi, algorithm, options, runOptions)
 			return;
 		}
 
-		editorUi.executeLayout(apply, true);
+		editorUi.executeLayout(apply, true, done);
 	});
 };
 
@@ -141,11 +143,11 @@ ElkLayoutBindings._saveSettings = function()
 	catch (e) { /* quota / private mode — silently ignore */ }
 };
 
-// End-user help for the layout dialogs — a single discussion with one
-// section per dialog, targeted via the per-algorithm anchors below.
-ElkLayoutBindings.HELP_URL = 'https://github.com/jgraph/drawio/discussions/5635';
-ElkLayoutBindings.HELP_ANCHORS = {layered: '#flow-layouts', mrtree: '#tree-layouts',
-	radial: '#radial-tree-layout', force: '#organic-layout', stress: '#organic-layout'};
+// End-user help for the layout dialogs — the docs site has one page per
+// layout type, selected via the per-algorithm path suffix below.
+ElkLayoutBindings.HELP_URL = 'https://www.drawio.com/docs/manual/layouts/';
+ElkLayoutBindings.HELP_ANCHORS = {layered: 'flow-layouts/', mrtree: 'tree-layouts/',
+	radial: 'radial-tree-layout/', force: 'organic-layout/', stress: 'organic-layout/'};
 
 // Maximum number of selected cells that an algorithm can use as roots.
 // Layered and mrtree both naturally support multiple topology roots (any

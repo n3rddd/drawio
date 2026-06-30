@@ -443,6 +443,7 @@ importFrom=වෙතින් ආයාත කරන්න
 includeCopyOfMyDiagram=මගේ රූප සටහනේ පිටපතක් ඇතුළත් කරන්න
 increaseIndent=ඉන්ඩෙන්ට් වැඩි කරන්න
 decreaseIndent=ඉන්ඩෙන්ට් අඩු කරන්න
+inherit=උරුම කරන්න
 initialView=ආරම්භක දසුන
 insert=ඇතුළු කරන්න
 insertColumnBefore=වම් පැත්තට තීරුවක් ඇතුළු කරන්න

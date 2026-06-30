@@ -969,9 +969,11 @@ mxStencilRegistry.allowEval = false;
 
 					// --layout: run the requested ELK layout once the diagram
 					// is loaded (applies to any opened file, generated or not).
+					// executeLayoutSpec (EditorUi) is shared with the embed
+					// "layout" action and the #create / load "layout" option.
 					if (layoutName != null)
 					{
-						this.runStartupLayout(layoutName);
+						this.executeLayoutSpec(layoutName);
 					}
 				}
 			});
@@ -1017,99 +1019,9 @@ mxStencilRegistry.allowEval = false;
 		}
 	}
 
-	// Resolves once isReady() returns true. The elk/mermaid bundles load
-	// asynchronously during startup (see bootstrap.js), so a file or layout
-	// passed on the command line can be processed before the bundle that handles
-	// it is ready. Calls success() immediately if already ready, otherwise polls
-	// briefly before giving up via error().
-	App.prototype.whenScriptReady = function(isReady, success, error)
-	{
-		if (isReady())
-		{
-			success();
-			return;
-		}
-
-		var attempts = 0;
-
-		var timer = window.setInterval(function()
-		{
-			if (isReady())
-			{
-				window.clearInterval(timer);
-				success();
-			}
-			else if (++attempts >= 100) // ~10s at 100ms
-			{
-				window.clearInterval(timer);
-
-				if (error != null)
-				{
-					error();
-				}
-			}
-		}, 100);
-	};
-
-	// Runs a layout on the freshly-opened diagram. The spec is either a
-	// MENU_PRESETS preset name (verticalFlow, ... — the same presets as the
-	// Arrange > Layout menu, shared with drawio-mcp) or the custom-layout-dialog
-	// JSON (an array of {layout, config}, starting with '[') for layout
-	// sequences and per-layout options. ElkLayout/window.ELK are provided by the
-	// eagerly-loaded js/elk/drawio-elk.min.js bundle.
-	App.prototype.runStartupLayout = function(spec)
-	{
-		var editorUi = this;
-		var isJson = mxUtils.trim(spec).charAt(0) == '[';
-		var list = null;
-
-		if (isJson)
-		{
-			try
-			{
-				list = JSON.parse(spec);
-			}
-			catch (e)
-			{
-				this.handleError(e);
-				return;
-			}
-		}
-
-		// The ELK bundle may still be loading when a layout is requested on the
-		// command line — wait for it before running.
-		this.whenScriptReady(function()
-		{
-			return typeof ElkLayout !== 'undefined' && ElkLayout.MENU_PRESETS != null;
-		}, function()
-		{
-			try
-			{
-				if (list != null)
-				{
-					// Same path as the custom layout dialog's Apply (sequence +
-					// options), minus the selection scoping (lay out the whole page).
-					editorUi.executeLayouts(editorUi.editor.graph.createLayouts(list));
-				}
-				else if (ElkLayout.MENU_PRESETS[spec] != null)
-				{
-					var preset = ElkLayout.MENU_PRESETS[spec];
-					ElkLayout.run(editorUi, preset.algorithm, preset.options, ElkLayout.CANONICAL_EDGE);
-				}
-				else
-				{
-					editorUi.handleError(new Error('Unknown layout: ' + spec));
-				}
-			}
-			catch (e)
-			{
-				editorUi.handleError(e);
-			}
-		}, function()
-		{
-			editorUi.handleError(new Error(mxResources.get('serviceUnavailableOrBlocked')));
-		});
-	};
+	// whenScriptReady (bundle-load poll) and the --layout resolver are shared
+	// with the webapp; see EditorUi.prototype.whenScriptReady /
+	// EditorUi.prototype.executeLayoutSpec in diagramly/EditorUi.js.
 
 	var origFileLoaded = EditorUi.prototype.fileLoaded;
 	

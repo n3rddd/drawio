@@ -443,6 +443,7 @@ importFrom=येथून आयात करा
 includeCopyOfMyDiagram=माझ्या आकृतीची प्रत समाविष्ट करा
 increaseIndent=इंडेंट वाढवा
 decreaseIndent=इंडेंट कमी करा
+inherit=वारसा
 initialView=प्रारंभिक दृश्य
 insert=घाला
 insertColumnBefore=डावीकडे स्तंभ घाला

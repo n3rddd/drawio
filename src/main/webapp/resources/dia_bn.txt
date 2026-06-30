@@ -443,6 +443,7 @@ importFrom=থেকে ইম্পোর্ট করুন
 includeCopyOfMyDiagram=আমার ডায়াগ্রামের একটি কপি অন্তর্ভুক্ত করুন
 increaseIndent=ইনডেন্ট বাড়ান
 decreaseIndent=ইনডেন্ট কমান
+inherit=উত্তরাধিকার
 initialView=প্রারম্ভিক ভিউ
 insert=সন্নিবেশ
 insertColumnBefore=বামে কলাম সন্নিবেশ করুন

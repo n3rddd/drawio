@@ -1,3 +1,37 @@
+30-JUN-2026: 30.2.7
+
+- Adds experimental loop handle
+- fix: Enhance inner loop handling and waypoint management in edge rendering
+- Implement inner loop waypoints for enhanced loop handling in edge styles
+- Refactor loop handling for edge styles: enhance inner loop waypoint management and improve geometry updates
+- Add 3-handle self-loop editing for inner-loop edges
+- Reverse self-loops and add loop direction controls
+- Make inner-loop editing robust on non-rectangular shapes; functional loop direction
+- Removes unused package lock to prevent false positive security alerts
+- Add layout option to #create hash and embed load action
+- Fixes missing ID prefix in embed mode
+- Add passThroughKeys embed config to forward keyboard chords to the host
+- Add suppressNewWindows embed mode to route links and popups through the host
+- Add tooltips=0 URL param to suppress cell tooltips
+- Anchor the shape-picker preview at the cursor in embedInline mode
+- Keep the inline edge toolbar popover inside the viewport
+- Quote font family names that are not valid CSS identifiers [jgraph/drawio-desktop#1604]
+- Avoid "Error undefined" message on terminated Dropbox requests
+- Replace Workbox CLI service-worker generation with an in-build Java helper
+- Raise polygon vertex precision and let Alt ignore the grid [jgraph/drawio#5380]
+- Make cursor-key move respect the document unit [jgraph/drawio#4812]
+- Rotate group children for the angle field, turn and rotate click [jgraph/drawio#3955]
+- Bump drawio-i18n: fix inconsistent English label capitalization
+- Repaint table grid lines hidden by filled cell fills
+- Keep line/fill color checkbox visible (unchecked) for inherited colors
+- Add UI to set a color to inherit from the parent
+- Point in-app help links to the docs site instead of GitHub Discussions
+- Corrects C4 legend colours
+- chore(mermaid): rebuild bundle with DID-19423 flowchart fixes
+- Fix DNS-rebinding SSRF in image proxy (GHSA-3v4h-8r2c-m8c5)
+- Harden ExportProxyServlet against path traversal (GHSA-3pq9-9hg4-ggfw)
+- Enforce OAuth state (CSRF) check on non-GAE deployments (GHSA-mcj5-3pww-7g49)
+
 24-JUN-2026: 30.2.6
 
 - Reduces verbosity of build output

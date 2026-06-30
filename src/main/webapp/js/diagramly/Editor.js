@@ -2584,6 +2584,28 @@
 				Editor.preserveViewState = true;
 			}
 
+			// Keyboard chords the embedding host wants to handle itself (e.g.
+			// Ctrl+P for VS Code Quick Open). In embed mode draw.io intercepts
+			// these in the capture phase, suppresses its own handling, and posts
+			// the host's command back, so a host can reclaim shortcuts even across
+			// a cross-origin iframe where it cannot inject its own key listener.
+			// Each entry is {key, ctrl, shift, alt, command}; see
+			// EditorUi.installPassThroughKeys.
+			if (config.passThroughKeys != null)
+			{
+				Editor.passThroughKeys = config.passThroughKeys;
+			}
+
+			// When set, the host blocks new windows/tabs (e.g. a VS Code webview):
+			// link clicks are forwarded to the host via {event:'openLink'} instead
+			// of window.open, and "open in new window/tab" options are hidden.
+			// Implies popupsAllowed=false. See Editor.suppressNewWindows.
+			if (config.suppressNewWindows)
+			{
+				Editor.suppressNewWindows = true;
+				Editor.popupsAllowed = false;
+			}
+
 			if (config.useInternalClipboard)
 			{
 				EditorUi.prototype.useInternalClipboard = config.useInternalClipboard;
@@ -11296,7 +11318,7 @@
 		if (!editorUi.isOffline() || mxClient.IS_CHROMEAPP)
 		{
 			shadowsRow.appendChild(editorUi.createHelpIcon(
-				'https://github.com/jgraph/drawio/discussions/5136'));
+				'https://www.drawio.com/docs/manual/export/print-diagram/#shadows-in-print-and-pdf-export'));
 		}
 
 		// Hides shadows option if not supported

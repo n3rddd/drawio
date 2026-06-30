@@ -443,6 +443,7 @@ importFrom=Importér fra
 includeCopyOfMyDiagram=Medtag en kopi af mit diagram
 increaseIndent=Forøg indrykning
 decreaseIndent=Reducér indrykning
+inherit=Nedarv
 initialView=Startvisning
 insert=Indsæt
 insertColumnBefore=Indsæt kolonne til venstre

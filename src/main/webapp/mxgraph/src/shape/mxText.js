@@ -700,7 +700,7 @@ mxText.prototype.getTextCss = function()
 		mxConstants.LINE_HEIGHT;
 
 	var css = 'display: inline-block; font-size: ' + this.size + 'px; ' +
-		'font-family: ' + this.family + '; color: ' + this.color + '; line-height: ' + lh +
+		'font-family: ' + mxUtils.parseCssFontFamily(this.family) + '; color: ' + this.color + '; line-height: ' + lh +
 		'; pointer-events: ' + ((this.pointerEvents) ? 'all' : 'none') + '; ';
 
 	if ((this.fontStyle & mxConstants.FONT_BOLD) == mxConstants.FONT_BOLD)
@@ -1008,7 +1008,7 @@ mxText.prototype.updateFont = function(node)
 	
 	style.lineHeight = (mxConstants.ABSOLUTE_LINE_HEIGHT) ? (this.size * mxConstants.LINE_HEIGHT) + 'px' : mxConstants.LINE_HEIGHT;
 	style.fontSize = this.size + 'px';
-	style.fontFamily = this.family;
+	style.fontFamily = mxUtils.parseCssFontFamily(this.family);
 	style.verticalAlign = 'top';
 	style.color = this.color;
 	

@@ -443,6 +443,7 @@ importFrom=次の場所からインポート
 includeCopyOfMyDiagram=ダイアグラムのコピーを含める
 increaseIndent=インデント追加
 decreaseIndent=インデント削除
+inherit=継承
 initialView=初期表示
 insert=挿入
 insertColumnBefore=列を左に挿入

@@ -8569,7 +8569,7 @@
 		linkSelect.style.boxSizing = 'border-box';
 
 		helpLink = (helpLink != null) ? helpLink :
-			'https://github.com/jgraph/drawio/discussions/5616#publish-link-dialog';
+			'https://www.drawio.com/docs/manual/export/publish-link/';
 
 		if (file == null || file.getHash() == '')
 		{
@@ -20910,8 +20910,169 @@
 	};
 	
 	/**
+	 * Resolves once isReady() returns true. The elk/mermaid bundles load
+	 * asynchronously (see App.main / bootstrap.js / Devel.js), so a layout or
+	 * mermaid request can arrive before the bundle that handles it is ready.
+	 * Calls success() immediately if already ready, otherwise polls briefly
+	 * before giving up via the optional error().
+	 */
+	EditorUi.prototype.whenScriptReady = function(isReady, success, error)
+	{
+		if (isReady())
+		{
+			success();
+			return;
+		}
+
+		var attempts = 0;
+
+		var timer = window.setInterval(function()
+		{
+			if (isReady())
+			{
+				window.clearInterval(timer);
+				success();
+			}
+			else if (++attempts >= 100) // ~10s at 100ms
+			{
+				window.clearInterval(timer);
+
+				if (error != null)
+				{
+					error();
+				}
+			}
+		}, 100);
+	};
+
+	/**
+	 * Runs a layout given as a single spec, the same format accepted by the
+	 * desktop --layout CLI flag, the embed "layout" action and the #create
+	 * hash / load "layout" option. The spec is either:
+	 *
+	 *   - a MENU_PRESETS preset name (verticalFlow, horizontalFlow,
+	 *     verticalTree, horizontalTree, radialTree, organic — the Arrange >
+	 *     Layout menu presets, all ELK), or
+	 *   - a custom-layout array ([{layout, config}, ...] — the format used by
+	 *     the Layout dialog and the embed "layout" action; see the JSON layout
+	 *     specification), passed either as an array or as a JSON string
+	 *     (starting with '[', as on the command line).
+	 *
+	 * Waits for the ELK bundle to load before running and invokes the optional
+	 * done callback once the layout has been applied.
+	 */
+	EditorUi.prototype.executeLayoutSpec = function(spec, done)
+	{
+		var editorUi = this;
+		var list = null;
+
+		// JSON string (as passed on the command line) -> array
+		if (typeof spec === 'string' && mxUtils.trim(spec).charAt(0) == '[')
+		{
+			try
+			{
+				spec = JSON.parse(spec);
+			}
+			catch (e)
+			{
+				this.handleError(e);
+				return;
+			}
+		}
+
+		if (typeof spec === 'object' && spec != null)
+		{
+			list = spec;
+		}
+
+		// The ELK bundle may still be loading when a layout is requested -
+		// wait for it before running (presets and elk* layouts both need it).
+		this.whenScriptReady(function()
+		{
+			return typeof ElkLayout !== 'undefined' && ElkLayout.MENU_PRESETS != null;
+		}, function()
+		{
+			try
+			{
+				if (list != null)
+				{
+					// Same path as the custom layout dialog's Apply (sequence +
+					// options), minus the selection scoping (lay out the whole page).
+					editorUi.executeLayouts(editorUi.editor.graph.createLayouts(list), done);
+				}
+				else if (ElkLayout.MENU_PRESETS[spec] != null)
+				{
+					var preset = ElkLayout.MENU_PRESETS[spec];
+					ElkLayout.run(editorUi, preset.algorithm, preset.options,
+						ElkLayout.CANONICAL_EDGE, done);
+				}
+				else
+				{
+					editorUi.handleError(new Error('Unknown layout: ' + spec));
+				}
+			}
+			catch (e)
+			{
+				editorUi.handleError(e);
+			}
+		}, function()
+		{
+			editorUi.handleError(new Error(mxResources.get('serviceUnavailableOrBlocked')));
+		});
+	};
+
+	/**
 	 * Adds the buttons for embedded mode.
 	 */
+	/**
+	 * Installs a capture-phase keydown listener that forwards the host-configured
+	 * pass-through chords (Editor.passThroughKeys) to the embedding app and
+	 * suppresses draw.io's own handling of them. Each entry is
+	 * {key, ctrl, shift, alt, command}; on a match draw.io posts
+	 * {event: 'shortcut', command} to the embed message source. Lets a host
+	 * reclaim shortcuts (e.g. Ctrl+P) even across a cross-origin iframe, where it
+	 * cannot inject its own key listener.
+	 */
+	EditorUi.prototype.installPassThroughKeys = function()
+	{
+		if (Editor.passThroughKeys == null || this.passThroughKeysListener != null)
+		{
+			return;
+		}
+
+		this.passThroughKeysListener = mxUtils.bind(this, function(evt)
+		{
+			var keys = Editor.passThroughKeys;
+			var mod = evt.ctrlKey || evt.metaKey;
+			var key = (evt.key != null) ? evt.key.toLowerCase() : '';
+
+			for (var i = 0; i < keys.length; i++)
+			{
+				var s = keys[i];
+
+				if (key === String(s.key).toLowerCase() && mod === !!s.ctrl &&
+					evt.shiftKey === !!s.shift && evt.altKey === !!s.alt)
+				{
+					evt.preventDefault();
+					evt.stopImmediatePropagation();
+
+					if (s.command != null)
+					{
+						var parent = this.embedMessageSource || window.opener || window.parent;
+						parent.postMessage(JSON.stringify({event: 'shortcut',
+							command: s.command}), '*');
+					}
+
+					return;
+				}
+			}
+		});
+
+		// Capture phase on window so it runs before draw.io's own (bubble-phase)
+		// key handlers and can suppress them.
+		window.addEventListener('keydown', this.passThroughKeysListener, true);
+	};
+
 	EditorUi.prototype.installMessageHandler = function(fn)
 	{
 		var changeListener = null;
@@ -20919,7 +21080,12 @@
 		var autosave = false;
 		var lastData = null;
 		var embedShadowPages = null;
-		
+
+		// Forward host-claimed keyboard chords (e.g. Ctrl+P) to the embedding app
+		// so it can run its own commands. Reads Editor.passThroughKeys, set via
+		// the configure config.
+		this.installPassThroughKeys();
+
 		var updateStatus = mxUtils.bind(this, function(sender, eventObject)
 		{
 			if (!this.editor.modified || urlParams['modified'] == '0')
@@ -20950,7 +21116,8 @@
 			
 			var data = evt.data;
 			var afterLoad = null;
-			
+			var pendingLayout = null;
+
 			var extractDiagramXml = mxUtils.bind(this, function(data)
 			{
 				if (data != null && typeof data.charAt === 'function' && data.charAt(0) != '<')
@@ -21693,6 +21860,12 @@
 							data.diffSync != null && data.diffSync.patchOnly == true);
 						this.embedExportProtocol = data.exportProtocol == true;
 						var sourceMetadata = data.sourceMetadata || null;
+						// layout: run the requested layout once the diagram is
+						// loaded (a preset name or custom-layout JSON, the same
+						// format as the standalone "layout" action and the desktop
+						// --layout flag). Applied in doLoad before the sync
+						// baseline so the laid-out result is the baseline.
+						pendingLayout = (data.layout != null) ? data.layout : null;
 						this.hideDialog();
 						
 						if (data.modified != null && urlParams['modified'] == null)
@@ -22176,105 +22349,132 @@
 					this.handleError(e);
 				}
 				ignoreChange = false;
-				
-				if (urlParams['modified'] != null)
-				{
-					this.clearStatus();
-				}
 
-				lastData = getData();
+				// Assigns a unique cell-ID prefix for this embed editor so cells
+				// created here do not collide with cells created in other embed
+				// editors of the same file. Without it every embed editor reuses the
+				// same incrementing IDs (2, 3, ...) and a merge/diff treats different
+				// new cells as the same cell. fileLoaded does this for real files but
+				// the embed load path bypasses it.
+				this.editor.graph.model.prefix = Editor.guid() + '-';
 
-				// Initialize shadow pages for diff-based sync
-				if (this.embedDiffSync)
+				// Establishes the sync baseline and sends the load response.
+				// Deferred until after the optional layout (below) so the
+				// laid-out diagram becomes the baseline (no spurious autosave)
+				// and the reported bounds reflect the new positions.
+				var afterModel = mxUtils.bind(this, function()
 				{
-					embedShadowPages = this.clonePages(this.pages);
-				}
-
-				if (autosave && changeListener == null)
-				{
-					changeListener = mxUtils.bind(this, function(sender, eventObject)
+					if (urlParams['modified'] != null)
 					{
-						var data = getData();
+						this.clearStatus();
+					}
 
-						if (data != lastData && !ignoreChange)
+					lastData = getData();
+
+					// Initialize shadow pages for diff-based sync
+					if (this.embedDiffSync)
+					{
+						embedShadowPages = this.clonePages(this.pages);
+					}
+
+					if (autosave && changeListener == null)
+					{
+						changeListener = mxUtils.bind(this, function(sender, eventObject)
 						{
-							var msg = this.createLoadMessage('autosave');
-							msg.message = message;
+							var data = getData();
 
-							if (this.embedDiffSync && embedShadowPages != null)
+							if (data != lastData && !ignoreChange)
 							{
-								var currentPages = this.clonePages(this.pages);
-								var patch = this.diffPages(embedShadowPages, currentPages);
+								var msg = this.createLoadMessage('autosave');
+								msg.message = message;
 
-								if (!mxUtils.isEmptyObject(patch))
+								if (this.embedDiffSync && embedShadowPages != null)
 								{
-									msg.patch = patch;
-									msg.checksum = this.getHashValueForPages(currentPages);
+									var currentPages = this.clonePages(this.pages);
+									var patch = this.diffPages(embedShadowPages, currentPages);
 
-									if (!this.embedDiffSyncPatchOnly)
+									if (!mxUtils.isEmptyObject(patch))
 									{
+										msg.patch = patch;
+										msg.checksum = this.getHashValueForPages(currentPages);
+
+										if (!this.embedDiffSyncPatchOnly)
+										{
+											msg.xml = data;
+										}
+									}
+									else
+									{
+										// No structural changes but data changed
 										msg.xml = data;
 									}
+
+									embedShadowPages = currentPages;
 								}
 								else
 								{
-									// No structural changes but data changed
 									msg.xml = data;
 								}
 
-								embedShadowPages = currentPages;
-							}
-							else
-							{
-								msg.xml = data;
+								var parent = this.embedMessageSource || window.opener || window.parent;
+								parent.postMessage(JSON.stringify(msg), '*');
 							}
 
-							var parent = this.embedMessageSource || window.opener || window.parent;
-							parent.postMessage(JSON.stringify(msg), '*');
-						}
+							lastData = data;
+						});
 
-						lastData = data;
-					});
-					
-					this.editor.graph.model.addListener(mxEvent.CHANGE, changeListener);
+						this.editor.graph.model.addListener(mxEvent.CHANGE, changeListener);
 
-					// Some options trigger autosave
-					this.editor.graph.addListener('gridSizeChanged', changeListener);
-					this.editor.graph.addListener('shadowVisibleChanged', changeListener);
-					this.addListener('pageFormatChanged', changeListener);
-					this.addListener('pageScaleChanged', changeListener);
-					this.addListener('backgroundColorChanged', changeListener);
-					this.addListener('backgroundImageChanged', changeListener);
-					this.addListener('foldingEnabledChanged', changeListener);
-					this.addListener('mathEnabledChanged', changeListener);
-					this.addListener('gridEnabledChanged', changeListener);
-					this.addListener('guidesEnabledChanged', changeListener);
-					this.addListener('pageViewChanged', changeListener);
-				}
-				
-				// Runs afterLoad before sending the load response so that
-				// the reported scale and bounds reflect any adjustments
-				// (e.g. custom scale parameter)
-				if (afterLoad != null)
-				{
-					afterLoad();
-				}
-
-				// Sends the bounds of the graph to the host after parsing
-				if (urlParams['returnbounds'] == '1' || urlParams['proto'] == 'json')
-				{
-					var resp = this.createLoadMessage('load');
-
-					// Attaches XML to response
-					resp.xml = data;
-
-					// Include checksum when diff sync is enabled
-					if (this.embedDiffSync && this.pages != null)
-					{
-						resp.checksum = this.getHashValueForPages(this.pages);
+						// Some options trigger autosave
+						this.editor.graph.addListener('gridSizeChanged', changeListener);
+						this.editor.graph.addListener('shadowVisibleChanged', changeListener);
+						this.addListener('pageFormatChanged', changeListener);
+						this.addListener('pageScaleChanged', changeListener);
+						this.addListener('backgroundColorChanged', changeListener);
+						this.addListener('backgroundImageChanged', changeListener);
+						this.addListener('foldingEnabledChanged', changeListener);
+						this.addListener('mathEnabledChanged', changeListener);
+						this.addListener('gridEnabledChanged', changeListener);
+						this.addListener('guidesEnabledChanged', changeListener);
+						this.addListener('pageViewChanged', changeListener);
 					}
 
-					parent.postMessage(JSON.stringify(resp), '*');
+					// Runs afterLoad before sending the load response so that
+					// the reported scale and bounds reflect any adjustments
+					// (e.g. custom scale parameter or layout)
+					if (afterLoad != null)
+					{
+						afterLoad();
+					}
+
+					// Sends the bounds of the graph to the host after parsing
+					if (urlParams['returnbounds'] == '1' || urlParams['proto'] == 'json')
+					{
+						var resp = this.createLoadMessage('load');
+
+						// Attaches XML to response (re-read when a layout ran so
+						// the host receives the laid-out diagram)
+						resp.xml = (pendingLayout != null) ? getData() : data;
+
+						// Include checksum when diff sync is enabled
+						if (this.embedDiffSync && this.pages != null)
+						{
+							resp.checksum = this.getHashValueForPages(this.pages);
+						}
+
+						parent.postMessage(JSON.stringify(resp), '*');
+					}
+				});
+
+				// layout (load option): apply before the baseline so it is
+				// absorbed into the loaded state rather than synced as a change.
+				if (pendingLayout != null)
+				{
+					this.executeLayoutSpec(pendingLayout, afterModel);
+				}
+				else
+				{
+					afterModel();
 				}
 			});
 			
@@ -22362,6 +22562,38 @@
 				
 				parent.postMessage(JSON.stringify({event: 'openLink', href: href, target: target, allowOpener: allowOpener}), '*');
 			};
+
+			// In suppressNewWindows mode, <a target="_blank"> links (e.g. in
+			// hover tooltips and HTML labels) are opened directly by the browser
+			// via window.open — which a popup-blocking host blocks and which
+			// bypasses openLink, so the host is never notified. Intercept such
+			// clicks in the capture phase and route them through openLink (which
+			// posts the openLink event above) instead.
+			if (Editor.suppressNewWindows)
+			{
+				document.addEventListener('click', mxUtils.bind(this, function(evt)
+				{
+					var source = mxEvent.getSource(evt);
+
+					while (source != null && source.nodeName != 'A')
+					{
+						source = source.parentNode;
+					}
+
+					if (source != null)
+					{
+						var href = source.getAttribute('href');
+
+						if (href != null && href.charAt(0) != '#' &&
+							href.substring(0, 11) != 'javascript:' &&
+							!this.editor.graph.isCustomLink(href))
+						{
+							evt.preventDefault();
+							this.editor.graph.openLink(href, source.getAttribute('target'));
+						}
+					}
+				}), true);
+			}
 		}
 	};
 	
@@ -22552,12 +22784,11 @@
 	};
 
 	/**
-	 * URL of the canonical JSON layout spec — the help-icon target for both
-	 * the custom layout dialog and the docs in www.diagrams.net-source /
-	 * drawusaurus. Defined once here so a future repoint doesn't have to
-	 * touch every callsite.
+	 * URL of the canonical JSON layout spec — the help-icon target for the
+	 * custom layout dialog. Defined once here so a future repoint doesn't
+	 * have to touch every callsite.
 	 */
-	EditorUi.APPLY_LAYOUTS_SPEC_URL = 'https://github.com/jgraph/drawio/discussions/5613';
+	EditorUi.APPLY_LAYOUTS_SPEC_URL = 'https://www.drawio.com/docs/reference/json-layout-specification/';
 
 	/**
 	 * Restricts the given layouts to the supplied cell subset. mxGraph
@@ -22842,7 +23073,7 @@
 				}
 			});
 		}, onCancel || null, mxResources.get('apply'),
-			'https://github.com/jgraph/drawio/discussions/5635#org-chart-layout');
+			'https://www.drawio.com/docs/manual/layouts/org-chart-layout/');
 
 		// null height = size to content (a fixed height clips the third
 		// row behind a scrollbar)

@@ -6633,7 +6633,7 @@ EditorUi.prototype.ctrlEnter = function()
 /**
  * Display a color dialog.
  */
-EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColorValue, singleColorMode, title, getColorFn)
+EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColorValue, singleColorMode, title, getColorFn, allowInherit)
 {
 	// The color tool window is a non-modal mxWindow that renders below the
 	// modal dialog backdrop, so it cannot be reached while a modal dialog is
@@ -6643,7 +6643,7 @@ EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColor
 		this.dialog.bg.parentNode != null)
 	{
 		this.pickColorModal(color, apply, defaultColor, defaultColorValue,
-			singleColorMode, title);
+			singleColorMode, title, null, allowInherit);
 
 		return;
 	}
@@ -6695,7 +6695,7 @@ EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColor
 	this.colorWindow.update(color, wrappedApply,
 		title || mxResources.get('fillColor'),
 		defaultColor, defaultColorValue, singleColorMode,
-		getColorFn);
+		getColorFn, allowInherit);
 };
 
 /**
@@ -6706,7 +6706,7 @@ EditorUi.prototype.pickColor = function(color, apply, defaultColor, defaultColor
  * closes on Apply or Cancel. pickColor delegates here automatically when a
  * modal dialog is already showing. The optional cancelFn runs on Cancel/Esc.
  */
-EditorUi.prototype.pickColorModal = function(color, apply, defaultColor, defaultColorValue, singleColorMode, title, cancelFn)
+EditorUi.prototype.pickColorModal = function(color, apply, defaultColor, defaultColorValue, singleColorMode, title, cancelFn, allowInherit)
 {
 	var graph = this.editor.graph;
 	var selState = graph.cellEditor.saveSelection();
@@ -6727,7 +6727,7 @@ EditorUi.prototype.pickColorModal = function(color, apply, defaultColor, default
 		{
 			cancelFn();
 		}
-	}, defaultColor, defaultColorValue, singleColorMode);
+	}, defaultColor, defaultColorValue, singleColorMode, null, allowInherit);
 
 	// Shows the property name as a heading (the tool window puts it in its
 	// title bar; the modal dialog has no title bar, so prepend it instead)
@@ -7336,7 +7336,8 @@ EditorUi.prototype.createKeyHandler = function(editor)
 	{
 		if (!graph.isSelectionEmpty() && graph.isEnabled())
 		{
-			stepSize = (stepSize != null) ? stepSize : 1;
+			// Default nudge respects the document unit (1px for points)
+			stepSize = (stepSize != null) ? stepSize : Editor.getCursorMoveStep(graph.view.unit);
 
 			var cells = graph.getCompositeParents(graph.getSelectionCells());
 			var cell = (cells.length > 0) ? cells[0] : null;

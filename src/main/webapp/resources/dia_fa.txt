@@ -443,6 +443,7 @@ importFrom=‫وارد نمودن از‬
 includeCopyOfMyDiagram=‫یک کپی از نمودار من را اضافه کن‬
 increaseIndent=‫افزایش فاصله‌ی سرسطر‬
 decreaseIndent=‫کاهش فاصله‌ی سرسطر‬
+inherit=ارث‌بری
 initialView=‫نمای اولیه‬
 insert=‫درج‬
 insertColumnBefore=‫وارد کردن ستون در سمت چپ‬

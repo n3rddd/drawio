@@ -443,6 +443,7 @@ importFrom=Uvezi iz
 includeCopyOfMyDiagram=Uključi kopiju mog dijagrama
 increaseIndent=Uvećaj urez
 decreaseIndent=Smanji urez
+inherit=Наследи
 initialView=Početni prikaz
 insert=Umetni
 insertColumnBefore=Umetni kolumnu levo

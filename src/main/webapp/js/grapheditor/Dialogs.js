@@ -328,7 +328,7 @@ ColorPicker.prototype.arrowImage = 'data:image/gif;base64,R0lGODlhBwALAKECAAAAAP
 /**
  * Constructs a new color dialog.
  */
-var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defaultColorValue, singleColorMode, liveApply)
+var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defaultColorValue, singleColorMode, liveApply, allowInherit)
 {
 	var cssDefaultColor = (defaultColorValue != null) ?
 		mxUtils.getLightDarkColor(defaultColorValue,
@@ -1388,6 +1388,40 @@ var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defau
 
 	div.appendChild(center);
 
+	// Offers an explicit "Inherit" choice so a color can be set to inherit from
+	// the parent (eg. a table/swimlane cell using its container's color). Shown
+	// only when the caller marks the value as inheritable (allowInherit). Applies
+	// the 'inherit' sentinel and closes the picker like choosing a color.
+	var inheritBtn = mxUtils.button(mxResources.get('inherit', null, 'Inherit'), function()
+	{
+		applyFunction('inherit');
+
+		if (liveApply)
+		{
+			if (self.closeFn != null)
+			{
+				self.closeFn();
+			}
+		}
+		else
+		{
+			editorUi.hideDialog();
+		}
+	});
+
+	inheritBtn.setAttribute('title', mxResources.get('inherit', null, 'Inherit'));
+	// allowInherit may be a live predicate (re-evaluated as the selection changes
+	// while the reused color window stays open) or a plain boolean
+	function inheritAllowed(v)
+	{
+		return (typeof v === 'function') ? v() : v;
+	};
+
+	inheritBtn.style.display = (inheritAllowed(allowInherit)) ? '' : 'none';
+	inheritBtn.style.width = '100%';
+	inheritBtn.style.margin = '6px 0 0 0';
+	div.appendChild(inheritBtn);
+
 	var buttons = null;
 
 	if (!liveApply)
@@ -1401,7 +1435,7 @@ var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defau
 
 		if (!editorUi.isOffline())
 		{
-			buttons.appendChild(editorUi.createHelpIcon('https://github.com/jgraph/drawio/discussions/4713'));
+			buttons.appendChild(editorUi.createHelpIcon('https://www.drawio.com/docs/manual/editor/appearance/adaptive-colours/'));
 		}
 
 		var cancelBtn = mxUtils.button(mxResources.get('cancel'), function()
@@ -1568,7 +1602,7 @@ var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defau
 		applyFunction = fn;
 	};
 
-	this.setColor = function(newColor, newDefaultColor, newDefaultColorValue, newSingleColorMode)
+	this.setColor = function(newColor, newDefaultColor, newDefaultColorValue, newSingleColorMode, newAllowInherit)
 	{
 		// Reset session tracking for recent colors
 		sessionRecentColor = null;
@@ -1577,6 +1611,9 @@ var ColorDialog = function(editorUi, color, apply, cancelFn, defaultColor, defau
 		defaultColor = newDefaultColor;
 		defaultColorValue = newDefaultColorValue;
 		singleColorMode = newSingleColorMode;
+
+		// Toggles the inherit affordance for the reused (non-modal) picker
+		inheritBtn.style.display = (inheritAllowed(newAllowInherit)) ? '' : 'none';
 		cssDefaultColor = (newDefaultColorValue != null) ?
 			mxUtils.getLightDarkColor(newDefaultColorValue,
 				null, null, newSingleColorMode) : null;
@@ -1909,6 +1946,7 @@ var ColorWindow = function(editorUi, x, y, w)
 	this.currentDefaultColor = null;
 	this.currentDefaultColorValue = null;
 	this.currentSingleColorMode = null;
+	this.currentAllowInherit = null;
 	this.applying = false;
 
 	var refreshColor = mxUtils.bind(this, function()
@@ -1920,8 +1958,11 @@ var ColorWindow = function(editorUi, x, y, w)
 
 			if (color != null)
 			{
+				// Passes allowInherit so an external change (eg. collaborator
+				// edit) does not drop the Inherit button while the window is open
 				this.colorDialog.setColor(color, this.currentDefaultColor,
-					this.currentDefaultColorValue, this.currentSingleColorMode);
+					this.currentDefaultColorValue, this.currentSingleColorMode,
+					this.currentAllowInherit);
 			}
 		}
 	});
@@ -1937,16 +1978,17 @@ var ColorWindow = function(editorUi, x, y, w)
  * Updates the color window state for a new color property.
  */
 ColorWindow.prototype.update = function(color, applyFn, title,
-	defaultColor, defaultColorValue, singleColorMode, getColorFn)
+	defaultColor, defaultColorValue, singleColorMode, getColorFn, allowInherit)
 {
 	this.getColorFn = getColorFn || null;
 	this.currentDefaultColor = defaultColor;
 	this.currentDefaultColorValue = defaultColorValue;
 	this.currentSingleColorMode = singleColorMode;
+	this.currentAllowInherit = allowInherit;
 
 	this.window.setTitle(title);
 	this.colorDialog.setApplyFn(applyFn);
-	this.colorDialog.setColor(color, defaultColor, defaultColorValue, singleColorMode);
+	this.colorDialog.setColor(color, defaultColor, defaultColorValue, singleColorMode, allowInherit);
 	this.window.setVisible(true);
 	this.fitHeight();
 	this.colorDialog.init();
@@ -2493,7 +2535,7 @@ EditDiagramDialog.showNewWindowOption = true;
 /**
  * URL for the user-facing documentation of this dialog.
  */
-EditDiagramDialog.helpLink = 'https://github.com/jgraph/drawio/discussions/5592';
+EditDiagramDialog.helpLink = 'https://www.drawio.com/docs/manual/advanced/diagram-source-edit/';
 
 /**
  * Constructs a new export dialog.

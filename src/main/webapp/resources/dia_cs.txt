@@ -443,6 +443,7 @@ importFrom=Importovat z
 includeCopyOfMyDiagram=Zahrnout kopii diagramu
 increaseIndent=Zvětšit odsazení
 decreaseIndent=Zmenšit odsazení
+inherit=Zdědit
 initialView=Počáteční zobrazení
 insert=Vložit
 insertColumnBefore=Vložit sloupec vlevo

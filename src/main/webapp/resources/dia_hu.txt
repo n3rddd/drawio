@@ -443,6 +443,7 @@ importFrom=Importálás innen:
 includeCopyOfMyDiagram=Diagram másolatának csatolása
 increaseIndent=Behúzás növelése
 decreaseIndent=Behúzás csökkentése
+inherit=Öröklés
 initialView=Kezdeti nézet
 insert=Beszúrás
 insertColumnBefore=Oszlop beszúrása balra

@@ -443,6 +443,7 @@ importFrom=இருந்து இறக்குமதி
 includeCopyOfMyDiagram=எனது வரைபடத்தின் நகலைச் சேர்
 increaseIndent=உள்தள்ளலை அதிகரி
 decreaseIndent=உள்தள்ளலைக் குறை
+inherit=மரபுரிமை
 initialView=ஆரம்ப பார்வை
 insert=செருகு
 insertColumnBefore=இடது நெடுவரிசையைச் செருகு

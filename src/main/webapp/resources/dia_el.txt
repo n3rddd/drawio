@@ -443,6 +443,7 @@ importFrom=Εισαγωγή από
 includeCopyOfMyDiagram=Να περιληφθεί ένα αντίγραφο του διαγράμματός μου
 increaseIndent=Αύξηση εσοχής
 decreaseIndent=Μείωση εσοχής
+inherit=Κληρονόμηση
 initialView=Αρχική προβολή
 insert=Εισαγωγή
 insertColumnBefore=Εισαγωγή Στήλης Αριστερά

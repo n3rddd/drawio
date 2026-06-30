@@ -285,7 +285,16 @@ Editor.fitWindowBorders = null;
  * Specifies if the diagram should be saved automatically if possible. Default
  * is true.
  */
-Editor.popupsAllowed = window.urlParams != null? urlParams['noDevice'] != '1' : true;
+/**
+ * Specifies if the host blocks opening new windows/tabs (window.open). When true
+ * (via the suppressNewWindows config option or ?suppressNewWindows=1), link
+ * clicks are forwarded to the embedding host instead of opening locally, and the
+ * "open in new window/tab" options in the Save/Export/HTML dialogs are hidden
+ * (popupsAllowed is forced off). Default false.
+ */
+Editor.suppressNewWindows = window.urlParams != null && urlParams['suppressNewWindows'] == '1';
+
+Editor.popupsAllowed = (window.urlParams != null? urlParams['noDevice'] != '1' : true) && !Editor.suppressNewWindows;
 
 /**
  * Specifies if the html and whiteSpace styles should be removed on inserted cells.
@@ -932,6 +941,31 @@ Editor.fromUnit = function(value, unit)
 };
 
 /**
+ * Returns the cursor-key nudge step in model pixels for the given unit. This makes
+ * arrow-key moves correspond to a sensible increment of the document unit instead of
+ * a fixed pixel. Points (the default) return 1 so point-based diagrams are unchanged.
+ */
+Editor.getCursorMoveStep = function(unit)
+{
+	if (unit == mxConstants.MILLIMETERS)
+	{
+		return 0.1 * mxConstants.PIXELS_PER_MM;
+	}
+	else if (unit == mxConstants.INCHES)
+	{
+		return 0.01 * mxConstants.PIXELS_PER_INCH;
+	}
+	else if (unit == mxConstants.METERS)
+	{
+		return 0.0001 * mxConstants.PIXELS_PER_MM * 1000;
+	}
+	else
+	{
+		return 1;
+	}
+};
+
+/**
  * Editor inherits from mxEventSource
  */
 mxUtils.extend(Editor, mxEventSource);
@@ -1125,7 +1159,7 @@ Editor.prototype.resetGraph = function()
 {
 	this.graph.gridEnabled = this.graph.defaultGridEnabled && (!this.isChromelessView() || urlParams['grid'] == '1');
 	this.graph.graphHandler.guidesEnabled = true;
-	this.graph.setTooltips(true);
+	this.graph.setTooltips(window.urlParams == null || urlParams['tooltips'] != '0');
 	this.graph.setConnectable(this.graph.defaultConnectable);
 	this.graph.connectionArrowsEnabled = this.graph.defaultConnectionArrowsEnabled;
 	this.graph.foldingEnabled = this.graph.defaultFoldingEnabled;
@@ -1178,7 +1212,8 @@ Editor.prototype.readGraphState = function(node)
 		(!this.isChromelessView() || urlParams['grid'] == '1');
 	this.graph.gridSize = parseFloat(node.getAttribute('gridSize')) || mxGraph.prototype.gridSize;
 	this.graph.graphHandler.guidesEnabled = node.getAttribute('guides') != '0';
-	this.graph.setTooltips(node.getAttribute('tooltips') != '0');
+	this.graph.setTooltips(node.getAttribute('tooltips') != '0' &&
+		(window.urlParams == null || urlParams['tooltips'] != '0'));
 	var connect = node.getAttribute('connect');
 
 	if (connect != null && Editor.config != null && Editor.config.defaultConnectable != null)
@@ -2659,7 +2694,7 @@ var PageSetupDialog = function(editorUi)
 		(!editorUi.isOffline() || mxClient.IS_CHROMEAPP || EditorUi.isElectronApp))
 	{
 		var helpLink = editorUi.menus.createHelpLink(
-			'https://github.com/jgraph/drawio/discussions/4713');
+			'https://www.drawio.com/docs/manual/editor/appearance/adaptive-colours/');
 		helpLink.style.marginLeft = '8px';
 		adaptiveRow.appendChild(helpLink);
 	}

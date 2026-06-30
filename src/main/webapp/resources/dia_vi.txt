@@ -443,6 +443,7 @@ importFrom=Nhập từ
 includeCopyOfMyDiagram=Bao gồm một bản sao biểu đồ của tôi
 increaseIndent=Tăng thụt lề
 decreaseIndent=Giảm thụt lề
+inherit=Kế thừa
 initialView=Chế độ xem ban đầu
 insert=Chèn
 insertColumnBefore=Chèn cột vào bên trái

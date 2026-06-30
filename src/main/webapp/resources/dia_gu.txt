@@ -443,6 +443,7 @@ importFrom=આમાંથી આયાત કરો
 includeCopyOfMyDiagram=મારા ડાયાગ્રામની નકલ સામેલ કરો
 increaseIndent=ઇન્ડેન્ટ વધારો
 decreaseIndent=ઇન્ડેન્ટ ઘટાડો
+inherit=વારસામાં લો
 initialView=પ્રારંભિક દૃશ્ય
 insert=દાખલ કરો
 insertColumnBefore=ડાબે કૉલમ દાખલ કરો

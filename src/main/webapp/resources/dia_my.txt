@@ -443,6 +443,7 @@ importFrom=မှ တင်သွင်း
 includeCopyOfMyDiagram=ကျွန်ုပ်၏ ပုံကြမ်း မိတ္တူတစ်ခု ထည့်သွင်း
 increaseIndent=အစားထိုးမှု တိုးမြှင့်
 decreaseIndent=အစားထိုးမှု လျှော့ချ
+inherit=အမွေဆက်ခံ
 initialView=ကနဦးမြင်ကွင်း
 insert=ထည့်သွင်း
 insertColumnBefore=ဘယ်ဘက်တွင် ကော်လံထည့်ရန်

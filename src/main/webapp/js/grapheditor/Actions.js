@@ -1673,7 +1673,7 @@ Actions.prototype.init = function()
 					if (graph.getModel().isEdge(cell))
 					{
 						var geo = graph.getCellGeometry(cell);
-			
+
 						if (geo != null)
 						{
 							geo = geo.clone();
@@ -1683,6 +1683,9 @@ Actions.prototype.init = function()
 							geo.offset = null;
 							graph.getModel().setGeometry(cell, geo);
 						}
+
+						// Reverts a converted self-loop to its default routing
+						graph.setCellStyles('innerLoopWaypoints', null, [cell]);
 					}
 				}
 			}

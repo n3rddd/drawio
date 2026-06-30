@@ -443,6 +443,7 @@ importFrom=Importera från
 includeCopyOfMyDiagram=Inkludera en kopia av mitt diagram
 increaseIndent=Öka indrag
 decreaseIndent=Minska indrag
+inherit=Ärv
 initialView=Startvy
 insert=Infoga
 insertColumnBefore=Infoga kolumn till vänster

@@ -3822,39 +3822,59 @@ App.prototype.executeCreateObject = function(value, done)
 							urlParams['grid'] == '1');
 					}
 
-					// Fits diagram to window
-					this.initialFitDiagram(1.2);
-
-					// Easter egg: pop effect animates all cells on load
-					if (value.effect == 'pop')
+					var finish = mxUtils.bind(this, function()
 					{
-						var graph = this.editor.graph;
-						var cells = graph.model.getDescendants(
-							graph.model.getRoot());
-						var nodes = graph.getNodesForCells(cells);
-						Graph.setOpacityForNodes(nodes, 0);
+						// Fits diagram to window
+						this.initialFitDiagram(1.2);
 
-						window.setTimeout(mxUtils.bind(this, function()
+						// Easter egg: pop effect animates all cells on load
+						if (value.effect == 'pop')
 						{
-							var animations = graph.createPopAnimations(
-								cells, true);
-							graph.executeAnimations(animations);
-						}), 200);
-					}
+							var graph = this.editor.graph;
+							var cells = graph.model.getDescendants(
+								graph.model.getRoot());
+							var nodes = graph.getNodesForCells(cells);
+							Graph.setOpacityForNodes(nodes, 0);
 
-					// Needs to go before upate of hash if
-					// it replaces the history state
-					if (done != null)
+							window.setTimeout(mxUtils.bind(this, function()
+							{
+								var animations = graph.createPopAnimations(
+									cells, true);
+								graph.executeAnimations(animations);
+							}), 200);
+						}
+
+						// Needs to go before upate of hash if
+						// it replaces the history state
+						if (done != null)
+						{
+							done();
+						}
+
+						// Sets create value with compressed XML. When a layout
+						// was applied, store the laid-out XML and drop the layout
+						// so a reload reproduces the result without re-running it.
+						value.type = 'xml';
+						value.compressed = true;
+						value.data = Graph.compress((value.layout != null) ?
+							mxUtils.getXml(this.editor.getGraphXml()) : xml);
+						delete value.layout;
+						window.location.hash = 'create=' +
+							encodeURIComponent(JSON.stringify(value));
+					});
+
+					// layout: run the requested layout (a preset name or
+					// custom-layout JSON, the same format as the desktop
+					// --layout flag and the embed "layout" action) before
+					// fitting so the view reflects the new positions.
+					if (value.layout != null)
 					{
-						done();
+						this.executeLayoutSpec(value.layout, finish);
 					}
-
-					// Sets create value with compressed XML
-					value.type = 'xml';
-					value.compressed = true;
-					value.data = Graph.compress(xml);
-					window.location.hash = 'create=' +
-						encodeURIComponent(JSON.stringify(value));
+					else
+					{
+						finish();
+					}
 				}), true, null, true);
 		});
 

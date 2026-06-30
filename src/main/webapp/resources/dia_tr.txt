@@ -443,6 +443,7 @@ importFrom=Şundan içe aktar
 includeCopyOfMyDiagram=Diyagramımın bir kopyasını da içer
 increaseIndent=Girintiyi arttır
 decreaseIndent=Girintiyi azalt
+inherit=Devral
 initialView=Başlangıç görünümü
 insert=Ekle
 insertColumnBefore=Sola sütun ekle

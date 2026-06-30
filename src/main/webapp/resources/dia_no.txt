@@ -443,6 +443,7 @@ importFrom=Importer fra
 includeCopyOfMyDiagram=Inkluder en kopi av diagrammet mitt
 increaseIndent=Øk innrykk
 decreaseIndent=Reduser innrykk
+inherit=Arv
 initialView=Startvisning
 insert=Sett inn
 insertColumnBefore=Legg til kolonne til venstre

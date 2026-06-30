@@ -443,6 +443,7 @@ importFrom=Імпортувати з
 includeCopyOfMyDiagram=Включити копію моєї діаграми
 increaseIndent=Збільшити відступ
 decreaseIndent=Зменшити відступ
+inherit=Успадкувати
 initialView=Початковий вигляд
 insert=Вставити
 insertColumnBefore=Вставити стовпчик зліва

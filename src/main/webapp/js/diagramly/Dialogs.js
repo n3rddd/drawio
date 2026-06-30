@@ -2457,7 +2457,7 @@ var ParseDialog = function(editorUi, title, defaultType)
 	{
 		buttons.appendChild(editorUi.createHelpIcon(
 			(defaultType == 'mermaid') ?
-				'https://github.com/jgraph/drawio/discussions/5643' :
+				'https://www.drawio.com/docs/manual/mermaid/' :
 				'https://plantuml.com/'));
 	}
 
@@ -6600,11 +6600,9 @@ LinkDialog.editCustomAction = function(editorUi, currentValue, onSave)
  * `currentColor` fill picks up the surrounding text color, so the same
  * markup works in light and dark mode.
  */
-// End-user manual for the animation / custom-action editors —
-// "Animations and Custom Actions — End-User Manual" in the drawio
-// repo's General discussions.
+// End-user manual for the animation / custom-action editors.
 var ANIMATION_HELP_URL =
-	'https://github.com/jgraph/drawio/discussions/5588';
+	'https://www.drawio.com/docs/manual/links-tooltips-tags/animations-custom-actions/';
 
 var SELECTOR_ICONS = {
 	// Down-arrow into a tray — "use the current canvas selection"
@@ -17830,7 +17828,7 @@ var FilePropertiesDialog = function(editorUi, publicLink)
 		var collabInput = editorUi.addCheckbox(settingsSection, mxResources.get('realtimeCollaboration'),
 			initialCollab, null, null, null, null, null, true);
 		collabInput.checkRow.appendChild(editorUi.menus.createHelpLink(
-			'https://github.com/jgraph/drawio/discussions/2672'));
+			'https://www.drawio.com/docs/manual/collaboration/concurrent-editing/#disable-real-time-collaboration'));
 
 		addApply(function(success, error)
 		{
@@ -18994,9 +18992,9 @@ var PolygonDialog = function(editorUi, cell, insertFn)
 	listPanel.style.padding = '4px';
 	contentDiv.appendChild(listPanel);
 
-	function snapValue(val)
+	function snapValue(val, ignoreGrid)
 	{
-		if (snapToGrid)
+		if (snapToGrid && !ignoreGrid)
 		{
 			return Math.round(val / SNAP_SIZE) * SNAP_SIZE;
 		}
@@ -19011,8 +19009,10 @@ var PolygonDialog = function(editorUi, cell, insertFn)
 		var clientY = evt.touches != null ? evt.touches[0].clientY : evt.clientY;
 		var x = viewX + ((clientX - rect.left) / rect.width) * viewW;
 		var y = viewY + ((clientY - rect.top) / rect.height) * viewH;
+		// Holding Alt (Option) temporarily ignores the grid, as on the main canvas
+		var ignoreGrid = mxEvent.isAltDown(evt);
 
-		return {x: snapValue(x), y: snapValue(y)};
+		return {x: snapValue(x, ignoreGrid), y: snapValue(y, ignoreGrid)};
 	};
 
 	function getDefaultControlPoint(prevPt, pt)
@@ -19898,12 +19898,12 @@ var PolygonDialog = function(editorUi, cell, insertFn)
 		// Normalize coordinates to bounding box (0-1 range)
 		var nx = function(val)
 		{
-			return rangeX > 0 ? Math.round(((val - bminX) / rangeX) * 100) / 100 : 0.5;
+			return rangeX > 0 ? Math.round(((val - bminX) / rangeX) * 100000) / 100000 : 0.5;
 		};
 
 		var ny = function(val)
 		{
-			return rangeY > 0 ? Math.round(((val - bminY) / rangeY) * 100) / 100 : 0.5;
+			return rangeY > 0 ? Math.round(((val - bminY) / rangeY) * 100000) / 100000 : 0.5;
 		};
 
 		var newCoords = [];

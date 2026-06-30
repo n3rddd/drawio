@@ -1572,7 +1572,7 @@
 
 					editorUi.loadOrgChartLayouts(delayed);
 				}, null, null,
-					'https://github.com/jgraph/drawio/discussions/5635#org-chart-layout');
+					'https://www.drawio.com/docs/manual/layouts/org-chart-layout/');
 
 				// null height = size to content (a fixed height clips the
 				// third row behind a scrollbar)
@@ -2805,7 +2805,7 @@
 						});
 					}
 				}, mxResources.get('image'), mxResources.get('retina'), editorUi.editor.isExportToCanvas(),
-					'https://github.com/jgraph/drawio/discussions/5616#embed-image--svg-dialogs');
+					'https://www.drawio.com/docs/manual/export/embed-diagram/');
 			}));
 
 			editorUi.actions.put('embedSvg', new Action('formatSvg' + '...', function()
@@ -2828,7 +2828,7 @@
 						});
 					}
 				}, mxResources.get('formatSvg'), mxResources.get('image'),
-					true, 'https://github.com/jgraph/drawio/discussions/5616#embed-image--svg-dialogs');
+					true, 'https://www.drawio.com/docs/manual/export/embed-svg/');
 			}));
 			
 			editorUi.actions.put('embedIframe', new Action('iframe' + '...', function()
@@ -5850,7 +5850,7 @@
 				}
 				
 				Graph.addFont(fontName, fontUrl);
-				tr.firstChild.nextSibling.style.fontFamily = fontName;
+				tr.firstChild.nextSibling.style.fontFamily = mxUtils.parseCssFontFamily(fontName);
 				
 				var tooltip = (fontLabel != null) ? fontLabel : fontName;
 						

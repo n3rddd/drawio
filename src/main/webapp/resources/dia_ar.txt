@@ -438,6 +438,7 @@ importFrom=‫جلب من‬
 includeCopyOfMyDiagram=‫تضمين نسخة من المخطط‬
 increaseIndent=‫زيادة المسافة القبلية‬
 decreaseIndent=‫تخفيض المسافة القبلية‬
+inherit=وراثة
 initialView=‫العرض الأولي‬
 insert=‫إضافة‬
 insertColumnBefore=‫إضافة عمود على اليسار‬

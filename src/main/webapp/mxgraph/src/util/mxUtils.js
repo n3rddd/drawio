@@ -237,12 +237,18 @@ var mxUtils =
 					tokens[i] = tokens[i].substring(1, tokens[i].length - 1);
 				}
 
+				// Quotes are required if the family is not a valid unquoted CSS
+				// identifier, eg. if it contains a space or a special character
+				// such as * (see github.com/jgraph/drawio-desktop/issues/1604)
+				var needsQuotes = hasQuotes ||
+					!/^-?[A-Za-z_\u00A0-\uFFFF][\w\u00A0-\uFFFF-]*$/.test(tokens[i]);
+
 				if (htmlEntities)
 				{
 					tokens[i] = mxUtils.htmlEntities(tokens[i]);
 				}
 
-				if (hasQuotes || tokens[i].indexOf(' ') >= 0)
+				if (needsQuotes)
 				{
 					tokens[i] = "'" + tokens[i].replace(/'/g, "\\'") + "'";
 				}

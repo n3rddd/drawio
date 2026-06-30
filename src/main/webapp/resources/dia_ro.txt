@@ -443,6 +443,7 @@ importFrom=Importă din
 includeCopyOfMyDiagram=Include o copie a diagramei mele
 increaseIndent=Mărește indentare
 decreaseIndent=Micșorează indentare
+inherit=Moștenește
 initialView=Vizualizare inițială
 insert=Inserează
 insertColumnBefore=Inserează o coloană la stânga

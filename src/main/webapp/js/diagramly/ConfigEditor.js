@@ -125,7 +125,7 @@ DrawioConfigEditor.install = function(container, options)
 		],
 		'export-toggles': [
 			{ key: 'compressXml', name: 'Compress XML', help: 'Compress XML output in saved files' },
-			{ key: 'compressStyles', name: 'Compress Styles', help: 'Deduplicate repeated inline images and stencils into a shared lookup table. Only readable by draw.io 29.3.1 and later.', experimental: true, helpLink: 'https://github.com/jgraph/drawio/discussions/5649' },
+			{ key: 'compressStyles', name: 'Compress Styles', help: 'Deduplicate repeated inline images and stencils into a shared lookup table. Only readable by draw.io 29.3.1 and later.', experimental: true, helpLink: 'https://www.drawio.com/docs/reference/style-compression/' },
 			{ key: 'includeDiagram', name: 'Include Diagram in Export', help: 'Include diagram data in export dialogs' },
 			{ key: 'enableExportUrl', name: 'Enable Export URL', help: 'Enable the export URL feature' },
 			{ key: 'lockdown', name: 'Lockdown', help: 'Disable data transmission apart from storage' },

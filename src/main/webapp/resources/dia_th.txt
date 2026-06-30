@@ -443,6 +443,7 @@ importFrom=นำเข้าจาก
 includeCopyOfMyDiagram=รวมแผนภาพฉบับคัดลอกของฉัน
 increaseIndent=เพิ่มย่อหน้า
 decreaseIndent=ลดย่อหน้า
+inherit=สืบทอด
 initialView=มุมมองเริ่มต้น
 insert=แทรก
 insertColumnBefore=แทรกคอลัมน์ทางซ้าย

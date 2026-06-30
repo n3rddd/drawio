@@ -396,6 +396,55 @@
 	
 	mxCellRenderer.registerShape('tableRow', TableRowShape);
 
+	// Repaints the grid lines a filled swimlane-shaped table cell (table, table
+	// row or lane) would otherwise hide with its fill. The table draws the lines
+	// centered on the cell boundaries and below its child cells, so the fill
+	// covers its half of them (see Graph.paintTableCellLines). mxSwimlane has
+	// translated the canvas to the shape origin, so the cell bounds are 0, 0,
+	// w, h here. TableShape/TableRowShape reach this via the super call.
+	var mxSwimlanePaintVertexShape = mxSwimlane.prototype.paintVertexShape;
+	mxSwimlane.prototype.paintVertexShape = function(c, x, y, w, h)
+	{
+		mxSwimlanePaintVertexShape.apply(this, arguments);
+
+		if (this.state != null && !this.outline)
+		{
+			var graph = this.state.view.graph;
+			var filled = (this.fill != null && this.fill != mxConstants.NONE) ||
+				(this.laneFill != null && this.laneFill != mxConstants.NONE);
+
+			if (filled && graph.paintTableCellLines != null)
+			{
+				var cell = this.state.cell;
+
+				// A table row only fills its title strip, so the separators are
+				// only covered there. Restricting the repaint to the strip leaves
+				// the body lines to the lane cells and avoids drawing across
+				// rowspan gaps the table left in the body.
+				if (graph.isTableRow != null && graph.isTableRow(cell))
+				{
+					var start = this.getTitleSize();
+
+					if (this.isHorizontal())
+					{
+						graph.paintTableCellLines(c, cell, 0, 0, w,
+							Math.min(start, h), this.stroke, this.strokewidth);
+					}
+					else
+					{
+						graph.paintTableCellLines(c, cell, 0, 0,
+							Math.min(start, w), h, this.stroke, this.strokewidth);
+					}
+				}
+				else
+				{
+					graph.paintTableCellLines(c, cell, 0, 0, w, h,
+						this.stroke, this.strokewidth);
+				}
+			}
+		}
+	};
+
 	// Cube Shape, supports size style
 	function CubeShape()
 	{
@@ -4258,6 +4307,20 @@
 			else
 			{
 				c.setStrokeColor(this.stroke);
+			}
+		}
+
+		// Repaints the table grid lines hidden by the cell fill (see
+		// Graph.paintTableCellLines). No-op unless this is a filled table cell.
+		if (this.state != null && !this.outline &&
+			this.fill != null && this.fill != mxConstants.NONE)
+		{
+			var graph = this.state.view.graph;
+
+			if (graph.paintTableCellLines != null)
+			{
+				graph.paintTableCellLines(c, this.state.cell, x, y, w, h,
+					this.stroke, this.strokewidth);
 			}
 		}
 	};
@@ -8239,7 +8302,7 @@
 				}, false)];
 			}
 		};
-		
+
 		// Exposes custom handles
 		Graph.createHandle = createHandle;
 		Graph.handleFactory = handleFactory;

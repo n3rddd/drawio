@@ -665,7 +665,7 @@ Sidebar.prototype.createTooltip = function(elt, cells, w, h, title, showLabel, o
 /**
  * Adds all palettes to the sidebar.
  */
-Sidebar.prototype.showTooltip = function(elt, cells, w, h, title, showLabel)
+Sidebar.prototype.showTooltip = function(elt, cells, w, h, title, showLabel, off)
 {
 	if (this.enableTooltips && this.showTooltips)
 	{
@@ -676,10 +676,10 @@ Sidebar.prototype.showTooltip = function(elt, cells, w, h, title, showLabel)
 				window.clearTimeout(this.thread);
 				this.thread = null;
 			}
-			
+
 			var show = mxUtils.bind(this, function()
 			{
-				this.createTooltip(elt, cells, w, h, title, showLabel);
+				this.createTooltip(elt, cells, w, h, title, showLabel, off);
 			});
 
 			if (this.tooltip != null && this.tooltip.style.display != 'none')
@@ -3284,7 +3284,13 @@ Sidebar.prototype.createItem = function(cells, title, showLabel, showTitle, widt
 			{
 				if (mxEvent.isMouseEvent(evt))
 				{
-					this.showTooltip(elt, cells, bounds.width, bounds.height, title, showLabel);
+					// In embedInline mode the tooltip is anchored to the document
+					// body, but the editor is a small floating container, so the
+					// default element-relative offset collapses to the page origin.
+					// Anchor the preview near the cursor instead.
+					var off = (urlParams['embedInline'] == '1') ?
+						new mxPoint(evt.clientX + 16, evt.clientY + 16) : null;
+					this.showTooltip(elt, cells, bounds.width, bounds.height, title, showLabel, off);
 				}
 			}));
 		}

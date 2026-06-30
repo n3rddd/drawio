@@ -443,6 +443,7 @@ importFrom=Importieren von
 includeCopyOfMyDiagram=Kopie meines Diagramms einfügen
 increaseIndent=Einzug vergrößern
 decreaseIndent=Einzug verringern
+inherit=Erben
 initialView=Anfangsansicht
 insert=Einfügen
 insertColumnBefore=Spalte links einfügen

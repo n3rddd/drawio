@@ -140,7 +140,7 @@ Menus.prototype.init = function()
 				});
 			});
 
-			tr.firstChild.nextSibling.style.fontFamily = fontFamily;
+			tr.firstChild.nextSibling.style.fontFamily = mxUtils.parseCssFontFamily(fontFamily);
 		});
 		
 		for (var i = 0; i < this.defaultFonts.length; i++)
@@ -523,7 +523,7 @@ Menus.prototype.init = function()
 		if (groupItem != null)
 		{
 			var help = this.editorUi.createHelpIcon(
-				'https://github.com/jgraph/drawio/discussions/5607');
+				'https://www.drawio.com/docs/manual/editor/group-shapes-connectors/');
 			help.style.display = 'inline-block';
 			help.style.verticalAlign = 'middle';
 			help.style.marginLeft = '6px';
@@ -1206,6 +1206,10 @@ Menus.prototype.edgeStyleChange = function(menu, label, keys, values, sprite, pa
 							geo.points = null;
 							graph.getModel().setGeometry(cell, geo);
 						}
+
+						// Clears the inner-loop flag along with the waypoints it
+						// describes (mirrors Graph.resetEdge and Clear Waypoints)
+						graph.setCellStyles('innerLoopWaypoints', null, [cell]);
 					}
 
 					for (var j = 0; j < keys.length; j++)

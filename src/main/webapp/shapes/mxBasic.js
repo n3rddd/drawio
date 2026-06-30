@@ -3384,8 +3384,8 @@ mxShapeBasicPolygon.prototype.constraints = null;
                             bounds.y + coords[index][1] * bounds.height);
                     }, function(bounds, pt)
                     {
-                        var x = Math.round(100 * Math.max(0, Math.min(1, (pt.x - bounds.x) / bounds.width))) / 100;
-                        var y = Math.round(100 * Math.max(0, Math.min(1, (pt.y - bounds.y) / bounds.height))) / 100;
+                        var x = Math.round(100000 * Math.max(0, Math.min(1, (pt.x - bounds.x) / bounds.width))) / 100000;
+                        var y = Math.round(100000 * Math.max(0, Math.min(1, (pt.y - bounds.y) / bounds.height))) / 100000;
 
                         coords[index] = [x, y];
                         state.style['polyCoords'] = JSON.stringify(coords);
@@ -3448,8 +3448,8 @@ mxShapeBasicPolygon.prototype.constraints = null;
                                 bounds.y + curves[segIndex][2] * bounds.height);
                         }, function(bounds, pt)
                         {
-                            var x = Math.round(100 * Math.max(0, Math.min(1, (pt.x - bounds.x) / bounds.width))) / 100;
-                            var y = Math.round(100 * Math.max(0, Math.min(1, (pt.y - bounds.y) / bounds.height))) / 100;
+                            var x = Math.round(100000 * Math.max(0, Math.min(1, (pt.x - bounds.x) / bounds.width))) / 100000;
+                            var y = Math.round(100000 * Math.max(0, Math.min(1, (pt.y - bounds.y) / bounds.height))) / 100000;
 
                             curves[segIndex] = ['Q', x, y];
                             state.style['polyCurves'] = JSON.stringify(curves);

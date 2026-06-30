@@ -627,6 +627,25 @@ InlineToolbar.prototype.repaint = function()
 };
 
 /**
+ * Clamps a position (in container scroll coordinates) so an element of the
+ * given size stays within the container's visible viewport. When the element
+ * is larger than the viewport along an axis it is pinned to the top/left edge
+ * so its start stays visible. Returns the clamped point.
+ */
+InlineToolbar.prototype.clampToContainer = function(x, y, w, h)
+{
+	var c = this.graph.container;
+	var minX = c.scrollLeft + 4;
+	var maxX = c.scrollLeft + c.clientWidth - w - 4;
+	var minY = c.scrollTop + 4;
+	var maxY = c.scrollTop + c.clientHeight - h - 4;
+
+	return new mxPoint(
+		(maxX > minX) ? Math.max(minX, Math.min(x, maxX)) : minX,
+		(maxY > minY) ? Math.max(minY, Math.min(y, maxY)) : minY);
+};
+
+/**
  * Returns the index of the active edge style item.
  */
 InlineToolbar.prototype.getActiveEdgeStyleIndex = function(items, style)
@@ -746,9 +765,15 @@ InlineToolbar.prototype.createPopover = function(anchorBtn, opts)
 		var btnCenterX = btnRect.left + btnRect.width / 2 - containerRect.left + scrollLeft;
 		var popX = btnCenterX - popoverWidth / 2;
 
-		// Check if popover fits below the toolbar within the viewport
-		var spaceBelow = window.innerHeight - toolbarRect.bottom;
-		var showAbove = spaceBelow < popoverHeight + 4;
+		// Decide above/below from the room available on each side WITHIN the
+		// container's visible viewport (not the window — the inline editor's
+		// container can be shorter than the window). Prefer below; flip above
+		// only when below does not fit and above is the roomier side.
+		var spaceAbove = toolbarRect.top - containerRect.top;
+		var spaceBelow = (containerRect.top + container.clientHeight) - toolbarRect.bottom;
+		var fitsBelow = spaceBelow >= popoverHeight + 4;
+		var fitsAbove = spaceAbove >= popoverHeight + 4;
+		var showAbove = !fitsBelow && (fitsAbove || spaceAbove > spaceBelow);
 		var popY;
 
 		if (showAbove)
@@ -769,12 +794,20 @@ InlineToolbar.prototype.createPopover = function(anchorBtn, opts)
 			popY = toolbarRect.bottom - containerRect.top + scrollTop + 2;
 		}
 
-		var minX = scrollLeft + 4;
-		var maxX = scrollLeft + container.clientWidth - popoverWidth - 4;
+		// Clamp to the visible viewport so the popover is never clipped by a
+		// container edge (e.g. the inline editor's top border).
+		var unclampedY = popY;
+		var clamped = this.clampToContainer(popX, popY, popoverWidth, popoverHeight);
+		popX = clamped.x;
+		popY = clamped.y;
 
-		if (maxX > minX)
+		// In the degenerate case where the popover fits on neither side and the
+		// clamp detaches it from the toolbar edge, the fixed arrow would point
+		// at empty space — hide it rather than show a dangling pointer.
+		if (popY != unclampedY)
 		{
-			popX = Math.max(minX, Math.min(popX, maxX));
+			arrowBorder.style.display = 'none';
+			arrowFill.style.display = 'none';
 		}
 
 		popover.style.left = Math.round(popX) + 'px';
@@ -1245,18 +1278,14 @@ InlineToolbar.prototype.showLineStyleMenu = function(evt)
 		var scrollLeft = container.scrollLeft;
 		var scrollTop = container.scrollTop;
 
-		var panelX = ddRect.left - containerRect.left + scrollLeft;
-		var panelY = ddRect.bottom - containerRect.top + scrollTop + 4;
-		var minX = scrollLeft + 4;
-		var maxX = scrollLeft + container.clientWidth - panel.offsetWidth - 4;
+		// Position below the dropdown, clamped to the visible viewport.
+		var clamped = this.clampToContainer(
+			ddRect.left - containerRect.left + scrollLeft,
+			ddRect.bottom - containerRect.top + scrollTop + 4,
+			panel.offsetWidth, panel.offsetHeight);
 
-		if (maxX > minX)
-		{
-			panelX = Math.max(minX, Math.min(panelX, maxX));
-		}
-
-		panel.style.left = Math.round(panelX) + 'px';
-		panel.style.top = Math.round(panelY) + 'px';
+		panel.style.left = Math.round(clamped.x) + 'px';
+		panel.style.top = Math.round(clamped.y) + 'px';
 
 		mxEvent.consume(e);
 	}));
@@ -1831,21 +1860,15 @@ InlineToolbar.prototype.showMarkerSubPanel = function(dropdown, prefix, items, c
 	var scrollLeft = container.scrollLeft;
 	var scrollTop = container.scrollTop;
 
-	var panelWidth = panel.offsetWidth;
-	var panelX = dropdownRect.left - containerRect.left + scrollLeft;
-	var panelY = dropdownRect.bottom - containerRect.top + scrollTop + 4;
+	// Clamp to the visible viewport (both axes) so a panel near the bottom
+	// edge shifts up to stay visible instead of being clipped.
+	var clamped = this.clampToContainer(
+		dropdownRect.left - containerRect.left + scrollLeft,
+		dropdownRect.bottom - containerRect.top + scrollTop + 4,
+		panel.offsetWidth, panel.offsetHeight);
 
-	// Keep within visible viewport
-	var minX = scrollLeft + 4;
-	var maxX = scrollLeft + container.clientWidth - panelWidth - 4;
-
-	if (maxX > minX)
-	{
-		panelX = Math.max(minX, Math.min(panelX, maxX));
-	}
-
-	panel.style.left = Math.round(panelX) + 'px';
-	panel.style.top = Math.round(panelY) + 'px';
+	panel.style.left = Math.round(clamped.x) + 'px';
+	panel.style.top = Math.round(clamped.y) + 'px';
 };
 
 /**

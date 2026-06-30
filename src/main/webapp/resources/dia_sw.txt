@@ -443,6 +443,7 @@ importFrom=Ingiza kutoka
 includeCopyOfMyDiagram=Jumuisha nakala ya mchoro wangu
 increaseIndent=Ongeza Uingizaji Ndani
 decreaseIndent=Punguza Uingizaji Ndani
+inherit=Rithi
 initialView=Mwonekano wa awali
 insert=Ingiza
 insertColumnBefore=Ingiza Safu Wima Kushoto

@@ -443,6 +443,7 @@ importFrom=Importa des de
 includeCopyOfMyDiagram=Inclou una còpia del meu diagrama
 increaseIndent=Augmenta el sagnat
 decreaseIndent=Disminueix el sagnat
+inherit=Heretar
 initialView=Vista inicial
 insert=Insereix
 insertColumnBefore=Insereix una columna a l'esquerra

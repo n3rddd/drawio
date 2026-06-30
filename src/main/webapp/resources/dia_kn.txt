@@ -443,6 +443,7 @@ importFrom=ಇಲ್ಲಿಂದ ಆಮದು
 includeCopyOfMyDiagram=ನನ್ನ ರೇಖಾಚಿತ್ರದ ಪ್ರತಿಯನ್ನು ಸೇರಿಸಿ
 increaseIndent=ಇಂಡೆಂಟ್ ಹೆಚ್ಚಿಸಿ
 decreaseIndent=ಇಂಡೆಂಟ್ ಕಡಿಮೆ ಮಾಡಿ
+inherit=ಪಿತ್ರಾರ್ಜಿತ
 initialView=ಆರಂಭಿಕ ವೀಕ್ಷಣೆ
 insert=ಸೇರಿಸಿ
 insertColumnBefore=ಎಡಕ್ಕೆ ಕಾಲಮ್ ಸೇರಿಸಿ
